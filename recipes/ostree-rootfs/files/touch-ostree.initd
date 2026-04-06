@@ -1,0 +1,17 @@
+#!/sbin/openrc-run
+
+# Copyright (c) NULIX 2024
+# This code is licensed under BSD-2-Clause
+
+name="ostree booted service"
+description="Service which indicates OSTree boot"
+
+depend() {
+	keyword -prefix -lxc -docker
+}
+
+start() {
+	ebegin "Starting OSTree booted service"
+	touch /run/ostree-booted
+	eend $?
+}

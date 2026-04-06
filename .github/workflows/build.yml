@@ -1,0 +1,42 @@
+name: Build image
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  actions: write
+
+concurrency:
+  group: build-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Raspberry Pi 3 image
+    runs-on: self-hosted
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build Nulix Alpine
+        uses: docker/bake-action@v6
+        with:
+          files: docker-bake.hcl
+          targets: |
+            firmware
+            ostree-initramfs
+            linux-kernel
+            u-boot
+            ostree-rootfs
+            ostree-sd-image
+          provenance: false
