@@ -1,0 +1,70 @@
+#!/sbin/openrc-run
+
+# Copyright (c) NULIX 2024
+# This code is licensed under BSD-2-Clause
+
+name="portainer service"
+description="Service which starts portainer container on the system"
+
+depend() {
+    need docker
+    after networking
+}
+
+start() {
+    ebegin "Waiting for time sync"
+
+    # wait until year is sane (>2024)
+    while [ "$(date +%Y)" -lt 2024 ]; do
+        sleep 1
+    done
+
+    ebegin "Waiting for Docker"
+
+    # wait for docker socket
+    i=0
+    while [ ! -S /var/run/docker.sock ]; do
+        sleep 1
+        i=$((i+1))
+        if [ "$i" -gt 30 ]; then
+            eerror "Docker socket not available"
+            return 1
+        fi
+    done
+
+    # also ensure docker responds
+    until docker info >/dev/null 2>&1; do
+        sleep 1
+    done
+
+    ebegin "Starting Portainer"
+
+    # load image if not present
+    if ! docker image inspect portainer/portainer-ce:sts >/dev/null 2>&1; then
+        if [ -f /opt/images/portainer.tar ]; then
+            docker load < /opt/images/portainer.tar
+        fi
+    fi
+
+    docker volume inspect portainer_data >/dev/null 2>&1 || \
+        docker volume create portainer_data
+
+    if ! docker ps | grep -q portainer; then
+        docker run -d \
+            --name portainer \
+            --restart=always \
+            -p 8000:8000 \
+            -p 9443:9443 \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v portainer_data:/data \
+            portainer/portainer-ce:sts
+    fi
+
+    eend $?
+}
+
+stop() {
+    ebegin "Stopping Portainer"
+    docker stop portainer
+    eend $?
+}
