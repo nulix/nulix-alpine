@@ -20,7 +20,7 @@ target "nulix-builder" {
 
 target "firmware" {
   context = "./recipes/firmware"
-  platforms = ["linux/amd64"]
+  platforms = ["linux/arm64"]
 
   contexts = {
     builder = "target:nulix-builder"
@@ -48,7 +48,7 @@ target "ostree-initramfs" {
 
 target "linux-kernel" {
   context = "./recipes/linux-kernel"
-  platforms = ["linux/amd64"]
+  platforms = ["linux/arm64"]
 
   contexts = {
     builder = "target:nulix-builder"
@@ -67,7 +67,7 @@ target "linux-kernel" {
 
 target "u-boot" {
   context = "./recipes/u-boot"
-  platforms = ["linux/amd64"]
+  platforms = ["linux/arm64"]
 
   contexts = {
     builder = "target:nulix-builder"
@@ -105,7 +105,7 @@ target "ostree-rootfs" {
 
 target "ostree-sd-image" {
   context = "./recipes/ostree-sd-image"
-  platforms = ["linux/amd64"]
+  platforms = ["linux/arm64"]
 
   contexts = {
     linux-kernel = "target:linux-kernel"
