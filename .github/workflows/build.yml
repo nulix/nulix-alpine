@@ -28,7 +28,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Build Nulix Alpine
+      - name: Build NULIX Alpine
         uses: docker/bake-action@v6
         with:
           files: docker-bake.hcl
@@ -40,3 +40,10 @@ jobs:
             ostree-rootfs
             ostree-sd-image
           provenance: false
+
+      - name: Upload OS image
+        uses: actions/upload-artifact@v4
+        with:
+          name: nulix-os
+          path: nulix-alpine/out/ostree-sd-image/nulix-os.img.bz2
+          retention-days: 7 # Keep the artifact for 7 days

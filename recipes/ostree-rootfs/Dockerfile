@@ -32,13 +32,11 @@ RUN mkdir -p $ROOTFS/etc/apk && \
     cp /etc/apk/repositories $ROOTFS/etc/apk/repositories && \
     cp -r /etc/apk/keys $ROOTFS/etc/apk/
 
-RUN ls
-
 # install base system directly into rootfs
 RUN apk add --no-cache \
     --root $ROOTFS \
     --initdb \
-    busybox ostree util-linux patchelf \
+    busybox ostree util-linux \
     $(echo "$PACKAGES" | tr ',' ' ') \
     $( \
         if [ "$MACHINE_VIRT" = "docker" ]; then \
@@ -150,6 +148,8 @@ RUN mkdir -p /out  && \
 # ----------------------
 # usrmerge
 # ----------------------
+RUN apk add --no-cache ostree patchelf
+
 RUN mv $ROOTFS/bin/* $ROOTFS/usr/bin 2>/dev/null || true && \
     $ROOTFS/usr/bin/busybox rm -v -rf $ROOTFS/bin && \
     $ROOTFS/usr/bin/busybox ln -v -s usr/bin $ROOTFS/bin && \
