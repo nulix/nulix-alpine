@@ -1,0 +1,32 @@
+#!/sbin/openrc-run
+
+# Copyright (c) NULIX 2024
+# This code is licensed under BSD-2-Clause
+
+name="tmpfiles service"
+description="mkdir temp directories"
+
+depend() {
+	keyword -prefix -lxc -docker
+}
+
+start() {
+	ebegin "Starting tmpfiles"
+	mkdir -p /var/rootdirs; chmod 755 /var/rootdirs
+	mkdir -p /var/rootdirs/opt; chmod 755 /var/rootdirs/opt
+	mkdir -p /var/rootdirs/mnt; chmod 755 /var/rootdirs/mnt
+	mkdir -p /var/rootdirs/media; chmod 755 /var/rootdirs/media
+	mkdir -p /var/rootdirs/srv; chmod 755 /var/rootdirs/srv
+	mkdir -p /var/roothome; chmod 700 /var/roothome
+	mkdir -p /var/usrlocal; chmod 755 /var/usrlocal
+	mkdir -p /var/usrlocal/bin; chmod 755 /var/usrlocal/bin
+	mkdir -p /var/usrlocal/etc; chmod 755 /var/usrlocal/etc
+	mkdir -p /var/usrlocal/games; chmod 755 /var/usrlocal/games
+	mkdir -p /var/usrlocal/include; chmod 755 /var/usrlocal/include
+	mkdir -p /var/usrlocal/lib; chmod 755 /var/usrlocal/lib
+	mkdir -p /var/usrlocal/man; chmod 755 /var/usrlocal/man
+	mkdir -p /var/usrlocal/sbin; chmod 755 /var/usrlocal/sbin
+	mkdir -p /var/usrlocal/share; chmod 755 /var/usrlocal/share
+	mkdir -p /var/usrlocal/src; chmod 755 /var/usrlocal/src
+	eend $?
+}

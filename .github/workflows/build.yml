@@ -31,7 +31,9 @@ jobs:
       - name: Build NULIX Alpine
         uses: docker/bake-action@v6
         with:
-          files: docker-bake.hcl
+          files: |
+            docker-bake.hcl
+            machines/raspberry-pi-3.hcl
           targets: |
             firmware
             ostree-initramfs

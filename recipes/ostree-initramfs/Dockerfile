@@ -23,7 +23,7 @@ RUN cd initramfs && \
     mkdir lib && \
     SH_LIBS=$(ldd bin/sh | grep '=>' | cut -d ' ' -f3) && \
     for i in $SH_LIBS; do \
-    cp -v $i lib; \
+      cp -v $i lib; \
     done
 
 # install ostree in initramfs
@@ -33,7 +33,7 @@ RUN apk fetch --no-cache ostree && \
     cd initramfs && \
     OSTREE_LIBS=$(ldd usr/lib/ostree/ostree-prepare-root | grep '=>' | cut -d ' ' -f3) && \
     for i in $OSTREE_LIBS; do \
-    cp -v $i lib; \
+      cp -v $i lib; \
     done
 
 # make cpio gz image
@@ -48,3 +48,11 @@ RUN cd initramfs && \
 # export stage
 FROM scratch AS export
 COPY --from=initramfs-build /work/initramfs/initramfs.img /
+
+###
+### extract initramfs (for debugging only):
+###
+# dd if=initramfs.img of=initramfs.img.gz bs=64 skip=1
+# rm initramfs.img
+# gzip -d initramfs.img.gz
+# cpio -idmv < initramfs.img

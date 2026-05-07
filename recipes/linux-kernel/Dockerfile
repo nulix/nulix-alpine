@@ -44,4 +44,6 @@ RUN cd linux && \
 
 # export stage
 FROM scratch AS export
-COPY --from=build /work/linux/kernel-modules.tar /work/linux/kernel-artifacts.tar /work/linux/version /
+COPY --from=build /work/linux/kernel-modules.tar /
+COPY --from=build /work/linux/kernel-artifacts.tar /
+COPY --from=build /work/linux/version /

@@ -6,14 +6,17 @@ FROM alpine:3.22.2 AS rootfs
 ARG MACHINE_NAME
 ARG MACHINE_ARCH
 ARG MACHINE_VIRT
+ARG KERNEL_IMAGE
+ARG SERIAL_PORT
+ARG SERIAL_BAUD
+ARG BOOT_DEV_PART
+ARG UBOOT_ENV_SIZE
 ARG PACKAGES=""
 ARG SSH_PUBLIC_KEY=""
 ARG OSTREE_BRANCHNAME="nulix/stable"
 ARG DISTRO_VERSION="unknown"
 
-ENV ROOTFS=/rootfs
-
-WORKDIR /work
+ENV ROOTFS="/rootfs"
 
 # ------------------------
 # Bring in artifacts from other stages
@@ -49,30 +52,47 @@ RUN apk add --no-cache \
     )
 
 # ------------------------
-# Install kernel + modules
+# Install kernel, modules and initramfs
 # ------------------------
 RUN mkdir -p kernel-modules kernel-artifacts && \
     tar xf kernel-modules.tar -C kernel-modules && \
     tar xf kernel-artifacts.tar -C kernel-artifacts
 
-RUN KERNEL_VERSION=$(cat version) && \
-    DEST=$ROOTFS/usr/lib/modules/$KERNEL_VERSION && \
-    mkdir -p $DEST/{dtb,overlays} && \
-    cp -r kernel-modules/* $ROOTFS/usr/lib/modules/ && \
-    cp kernel-artifacts/Image $DEST/vmlinuz && \
-    cp initramfs.img $DEST/initramfs.img
+RUN K_VER=$(ls kernel-modules) && \
+    DEST="$ROOTFS/usr/lib/modules/$K_VER" && \
+    mkdir -p $ROOTFS/usr/lib/modules && \
+    cp -rv kernel-modules/$K_VER $ROOTFS/usr/lib/modules && \
+    cp -v kernel-artifacts/$KERNEL_IMAGE $DEST/vmlinuz && \
+    cp -v initramfs.img $DEST/initramfs.img
 
+# ------------------------
+# openrc setup
+# ------------------------
 # copy custom initd scripts
-COPY files/touch-ostree.initd $ROOTFS/etc/init.d/touch-ostree
-COPY files/portainer.initd $ROOTFS/etc/init.d/portainer
+COPY openrc/tmpfiles.initd $ROOTFS/etc/init.d/tmpfiles
+COPY openrc/resize-rootfs.initd $ROOTFS/etc/init.d/resize-rootfs
+COPY openrc/touch-ostree.initd $ROOTFS/etc/init.d/touch-ostree
+COPY openrc/portainer.initd $ROOTFS/etc/init.d/portainer
 
 # make initd scripts executable
-RUN chmod +x $ROOTFS/etc/init.d/portainer && \
-    chmod +x $ROOTFS/etc/init.d/touch-ostree
+RUN chmod +x $ROOTFS/etc/init.d/tmpfiles && \
+    chmod +x $ROOTFS/etc/init.d/resize-rootfs && \
+    chmod +x $ROOTFS/etc/init.d/touch-ostree && \
+    chmod +x $ROOTFS/etc/init.d/portainer
 
-# ------------------------
-# rc-update setup
-# ------------------------
+# configure console
+RUN cd $ROOTFS/etc/conf.d && \
+    cp agetty agetty.$SERIAL_PORT && \
+    sed -i "s/^#baud=\"\"/baud=\"$SERIAL_BAUD\"/" agetty.$SERIAL_PORT && \
+    cd $ROOTFS/etc/init.d && \
+    ln -s agetty agetty.$SERIAL_PORT
+
+# configure networking
+RUN mkdir -p $ROOTFS/etc/network && \
+    printf "auto lo\niface lo inet loopback\n\n\
+auto eth0\niface eth0 inet dhcp\n" \
+    > $ROOTFS/etc/network/interfaces
+
 RUN set -eux; \
     \
     # create runlevel dirs
@@ -81,9 +101,11 @@ RUN set -eux; \
     done; \
     \
     # sysinit
-    ln -sf /etc/init.d/devfs   "$ROOTFS/etc/runlevels/sysinit/devfs"; \
-    ln -sf /etc/init.d/dmesg   "$ROOTFS/etc/runlevels/sysinit/dmesg"; \
-    ln -sf /etc/init.d/mdev    "$ROOTFS/etc/runlevels/sysinit/mdev"; \
+    ln -sf /etc/init.d/devfs "$ROOTFS/etc/runlevels/sysinit/devfs"; \
+    ln -sf /etc/init.d/dmesg "$ROOTFS/etc/runlevels/sysinit/dmesg"; \
+    ln -sf /etc/init.d/mdev "$ROOTFS/etc/runlevels/sysinit/mdev"; \
+    ln -sf /etc/init.d/tmpfiles "$ROOTFS/etc/runlevels/sysinit/tmpfiles"; \
+    ln -sf /etc/init.d/resize-rootfs "$ROOTFS/etc/runlevels/sysinit/resize-rootfs"; \
     \
     # boot
     ln -sf /etc/init.d/hwclock "$ROOTFS/etc/runlevels/boot/hwclock"; \
@@ -102,7 +124,7 @@ RUN set -eux; \
     ln -sf /etc/init.d/firstboot "$ROOTFS/etc/runlevels/default/firstboot"; \
     ln -sf /etc/init.d/touch-ostree "$ROOTFS/etc/runlevels/default/touch-ostree"; \
     ln -sf /etc/init.d/sshd "$ROOTFS/etc/runlevels/default/sshd"; \
-    ln -sf /etc/init.d/agetty "$ROOTFS/etc/runlevels/default/agetty.ttyS0"; \
+    ln -sf /etc/init.d/agetty.${SERIAL_PORT} "$ROOTFS/etc/runlevels/default/agetty.${SERIAL_PORT}"; \
     ln -sf /etc/init.d/chronyd "$ROOTFS/etc/runlevels/default/chronyd"; \
     \
     # docker
@@ -112,27 +134,38 @@ RUN set -eux; \
         ln -sf /etc/init.d/portainer "$ROOTFS/etc/runlevels/default/portainer"; \
     fi
 
-# configure console
-RUN echo 'tty="ttyS0"' > $ROOTFS/etc/conf.d/agetty.ttyS0 && \
-    echo 'baud="115200"' >> $ROOTFS/etc/conf.d/agetty.ttyS0 && \
-    echo 'term_type="vt100"' >> $ROOTFS/etc/conf.d/agetty.ttyS0 && \
-    echo 'ttyS0::respawn:/sbin/getty -L ttyS0 115200 vt100' >> $ROOTFS/etc/inittab
-
-# configure networking
-RUN mkdir -p $ROOTFS/etc/network && \
-    printf "auto lo\niface lo inet loopback\n\n\
-auto eth0\niface eth0 inet dhcp\n" \
-    > $ROOTFS/etc/network/interfaces
+# install openrc-init reboot and poweroff scripts
+COPY openrc/poweroff.in $ROOTFS/sbin/
+COPY openrc/reboot.in $ROOTFS/sbin/
+RUN mv $ROOTFS/sbin/poweroff.in $ROOTFS/sbin/poweroff && \
+    mv $ROOTFS/sbin/reboot.in $ROOTFS/sbin/reboot && \
+    chmod +x $ROOTFS/sbin/poweroff && \
+    chmod +x $ROOTFS/sbin/reboot
 
 # ------------------------
 # Link init
 # ------------------------
-RUN ln -sf /sbin/init $ROOTFS/init
+RUN cd $ROOTFS/sbin && \
+    ln -sf openrc-init init
+
+# openrc-init does not use /etc/inittab
+RUN rm $ROOTFS/etc/inittab
 
 # ------------------------
 # Basic system config
 # ------------------------
+# set root password
 RUN echo "root:root" | chroot $ROOTFS chpasswd
+
+# add login console
+RUN grep -q "$SERIAL_PORT" $ROOTFS/etc/securetty || echo "$SERIAL_PORT" >> $ROOTFS/etc/securetty
+
+# cleanups
+RUN printf "" > $ROOTFS/etc/motd
+RUN printf "" > $ROOTFS/etc/fstab
+COPY files/issue.in $ROOTFS/etc/issue
+COPY files/setup_env.sh $ROOTFS/etc/profile.d/
+COPY files/panic.conf $ROOTFS/etc/sysctl.d/99-panic.conf
 
 # SSH setup
 RUN if [ -n "$SSH_PUBLIC_KEY" ]; then \
@@ -144,6 +177,14 @@ fi
 # package manifest
 RUN mkdir -p /out  && \
     apk --root $ROOTFS info -vv > /out/package.manifest
+
+# ------------------------
+# Machine specific files
+# ------------------------
+COPY machine/fstab.in $ROOTFS/etc/fstab
+COPY machine/fw_env.config.in $ROOTFS/etc/fw_env.config
+RUN sed -i "s/@@BOOT_DEV@@/${BOOT_DEV_PART}/" $ROOTFS/etc/fstab
+RUN sed -i "s/@@ENV_SIZE@@/${UBOOT_ENV_SIZE}/" $ROOTFS/etc/fw_env.config
 
 # ----------------------
 # usrmerge
@@ -177,7 +218,7 @@ RUN mkdir -p $ROOTFS/sysroot && \
     mkdir -p $ROOTFS/usr/rootdirs && \
     mkdir -p $ROOTFS/usr/etc && \
     cp -a $ROOTFS/etc/. $ROOTFS/usr/etc/ && \
-    echo -n "nulix" > $ROOTFS/usr/etc/hostname && \
+    echo -n "${MACHINE_NAME}" > $ROOTFS/usr/etc/hostname && \
     ln -v -sf /run/resolv.conf $ROOTFS/usr/etc/resolv.conf && \
     mkdir -v -p $ROOTFS/usr/share/sota && \
     echo -n "${OSTREE_BRANCHNAME}" > $ROOTFS/usr/share/sota/branchname && \

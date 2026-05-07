@@ -1,0 +1,32 @@
+#!/sbin/openrc-run
+
+# Copyright (c) NULIX 2025
+# This code is licensed under BSD-2-Clause
+
+name="Resize rootfs partition"
+description="Service to grow the rootfs partition to the full size of the storage device"
+
+depend() {
+	keyword -prefix -lxc -docker
+}
+
+start() {
+	if [ -f /var/cache/resize-rootfs ]; then
+		einfo "The rootfs partition is already resized"
+		return 0
+	fi
+
+	ebegin "Starting root filesystem resize service"
+
+	ROOT_PART=$(mount | grep ' on / ' | awk '{print $1}')
+	DISK_DEV=$(echo "$ROOT_PART" | sed -E 's/p?[0-9]+$//')
+
+	echo -e "resizepart\n${ROOT_PART##*p}\nYes\n100%\nquit" | parted "$DISK_DEV" ---pretend-input-tty
+
+	e2fsck -f "$ROOT_PART"
+	resize2fs "$ROOT_PART"
+
+	touch /var/cache/resize-rootfs
+
+	eend $?
+}
