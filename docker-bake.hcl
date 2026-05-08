@@ -18,7 +18,7 @@ target "firmware" {
     builder = "target:nulix-builder"
   }
 
-  output = ["type=local,dest=./out/firmware"]
+  output = ["type=local,dest=./out/${MACHINE_NAME}/firmware"]
 }
 
 target "u-boot" {
@@ -29,7 +29,7 @@ target "u-boot" {
     builder = "target:nulix-builder"
   }
 
-  output = ["type=local,dest=./out/u-boot"]
+  output = ["type=local,dest=./out/${MACHINE_NAME}/u-boot"]
 }
 
 target "linux-kernel" {
@@ -40,7 +40,7 @@ target "linux-kernel" {
     builder = "target:nulix-builder"
   }
 
-  output = ["type=local,dest=./out/linux-kernel"]
+  output = ["type=local,dest=./out/${MACHINE_NAME}/linux-kernel"]
 }
 
 target "ostree-initramfs" {
@@ -51,7 +51,7 @@ target "ostree-initramfs" {
     MACHINE_ARCH = "${MACHINE_ARCH}"
   }
 
-  output = ["type=local,dest=./out/ostree-initramfs"]
+  output = ["type=local,dest=./out/${MACHINE_NAME}/ostree-initramfs"]
 }
 
 target "ostree-rootfs" {
@@ -71,7 +71,7 @@ target "ostree-rootfs" {
     builder = "target:nulix-builder"
   }
 
-  output = ["type=local,dest=./out/ostree-rootfs"]
+  output = ["type=local,dest=./out/${MACHINE_NAME}/ostree-rootfs"]
 }
 
 target "ostree-sd-image" {
@@ -93,5 +93,5 @@ target "ostree-sd-image" {
     IMAGE_FILE = "nulix-os.img"
   }
 
-  output = ["type=local,dest=./out/ostree-sd-image"]
+  output = ["type=local,dest=./out/${MACHINE_NAME}/ostree-sd-image"]
 }

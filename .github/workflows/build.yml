@@ -47,5 +47,5 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: nulix-os.img.bz2
-          path: out/ostree-sd-image/nulix-os.img.bz2
+          path: out/raspberry-pi-3/ostree-sd-image/nulix-os.img.bz2
           retention-days: 7 # Keep the artifact for 7 days
