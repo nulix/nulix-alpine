@@ -31,6 +31,17 @@ It is designed for:
 
 ---
 
+## ⚙️ Build
+
+```bash
+docker bake -f docker-bake.hcl -f machines/raspberry-pi-3.hcl
+```
+
+> [!NOTE]
+> Replace the machine file accordingly.
+
+---
+
 ## 🧠 Core Concepts
 
 ### 🏔️ Alpine Linux

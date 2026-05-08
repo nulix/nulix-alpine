@@ -23,29 +23,29 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
       - name: Build NULIX Alpine
-        uses: docker/bake-action@v6
+        uses: docker/bake-action@v7
         with:
           files: |
             docker-bake.hcl
             machines/raspberry-pi-3.hcl
           targets: |
             firmware
-            ostree-initramfs
-            linux-kernel
             u-boot
+            linux-kernel
+            ostree-initramfs
             ostree-rootfs
             ostree-sd-image
           provenance: false
 
       - name: Upload OS image
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: nulix-os
+          name: nulix-os.img.bz2
           path: out/ostree-sd-image/nulix-os.img.bz2
           retention-days: 7 # Keep the artifact for 7 days

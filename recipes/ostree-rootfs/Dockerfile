@@ -121,7 +121,6 @@ RUN set -eux; \
     ln -sf /etc/init.d/savecache "$ROOTFS/etc/runlevels/shutdown/savecache"; \
     \
     # default
-    ln -sf /etc/init.d/firstboot "$ROOTFS/etc/runlevels/default/firstboot"; \
     ln -sf /etc/init.d/touch-ostree "$ROOTFS/etc/runlevels/default/touch-ostree"; \
     ln -sf /etc/init.d/sshd "$ROOTFS/etc/runlevels/default/sshd"; \
     ln -sf /etc/init.d/agetty.${SERIAL_PORT} "$ROOTFS/etc/runlevels/default/agetty.${SERIAL_PORT}"; \
@@ -161,11 +160,13 @@ RUN echo "root:root" | chroot $ROOTFS chpasswd
 RUN grep -q "$SERIAL_PORT" $ROOTFS/etc/securetty || echo "$SERIAL_PORT" >> $ROOTFS/etc/securetty
 
 # cleanups
-RUN printf "" > $ROOTFS/etc/motd
-RUN printf "" > $ROOTFS/etc/fstab
 COPY files/issue.in $ROOTFS/etc/issue
 COPY files/setup_env.sh $ROOTFS/etc/profile.d/
 COPY files/panic.conf $ROOTFS/etc/sysctl.d/99-panic.conf
+RUN sed -i "s/x.y.z/$DISTRO_VERSION/" $ROOTFS/etc/issue
+RUN sed -i "s/^#RESOLV_CONF=\"\/tmp/RESOLV_CONF=\"\/run/" $ROOTFS/etc/udhcpc/udhcpc.conf
+RUN printf "" > $ROOTFS/etc/motd
+RUN printf "" > $ROOTFS/etc/fstab
 
 # SSH setup
 RUN if [ -n "$SSH_PUBLIC_KEY" ]; then \
@@ -187,42 +188,78 @@ RUN sed -i "s/@@BOOT_DEV@@/${BOOT_DEV_PART}/" $ROOTFS/etc/fstab
 RUN sed -i "s/@@ENV_SIZE@@/${UBOOT_ENV_SIZE}/" $ROOTFS/etc/fw_env.config
 
 # ----------------------
-# usrmerge
+# OSTree preparations
 # ----------------------
-RUN apk add --no-cache ostree patchelf
+RUN apk add --no-cache ostree
 
-RUN mv $ROOTFS/bin/* $ROOTFS/usr/bin 2>/dev/null || true && \
-    $ROOTFS/usr/bin/busybox rm -v -rf $ROOTFS/bin && \
-    $ROOTFS/usr/bin/busybox ln -v -s usr/bin $ROOTFS/bin && \
-    mkdir -v -p $ROOTFS/usr/sbin && \
+# placeholder for ostree boot files
+RUN mkdir $ROOTFS/boot
+
+# replicate usrmerge
+RUN mkdir -p $ROOTFS/usr/bin && \
+    mv -v $ROOTFS/bin/* $ROOTFS/usr/bin && \
+    rm -rf $ROOTFS/bin && \
+    ln -s usr/bin $ROOTFS/bin && \
+    mkdir -p $ROOTFS/usr/sbin && \
     mv -v $ROOTFS/sbin/* $ROOTFS/usr/sbin && \
-    rm -v -rf $ROOTFS/sbin && \
+    rm -rf $ROOTFS/sbin && \
     ln -s usr/sbin $ROOTFS/sbin && \
-    mkdir -v -p $ROOTFS/usr/lib && \
-    cp -v -a $ROOTFS/lib/* $ROOTFS/usr/lib && \
-    cp -v $ROOTFS/usr/bin/busybox $ROOTFS/tmp && \
-    patchelf --set-interpreter $ROOTFS/usr/lib/ld-musl-*.so.* $ROOTFS/tmp/busybox && \
-    rm -v -rf $ROOTFS/lib && \
-    $ROOTFS/tmp/busybox ln -v -s usr/lib $ROOTFS/lib && \
+    mkdir -p $ROOTFS/usr/lib && \
+    cp -va $ROOTFS/lib/* $ROOTFS/usr/lib && \
+    rm -rf $ROOTFS/lib && \
+    ln -s usr/lib $ROOTFS/lib && \
     \
     if [ -d "$ROOTFS/lib64" ]; then \
         mkdir -p $ROOTFS/usr/lib64 \
-        cp -a $ROOTFS/lib64/* $ROOTFS/usr/lib64/ \
+        cp -va $ROOTFS/lib64/* $ROOTFS/usr/lib64/ \
         rm -rf $ROOTFS/lib64 \
         ln -s usr/lib64 $ROOTFS/lib64; \
-    fi && \
-    rm -v -f $ROOTFS/tmp/busybox
+    fi
 
+# preserve var/lib/$MACHINE_VIRT
+RUN if [ -d "$ROOTFS/var/lib/$MACHINE_VIRT" ]; then \
+        mv $ROOTFS/var/lib/$MACHINE_VIRT var-lib-$MACHINE_VIRT; \
+    fi
+
+# preserve var/local
+RUN if [ -d "$ROOTFS/var/local" ]; then \
+        mv $ROOTFS/var/local var-local; \
+    fi
+
+# completely remove var
+RUN rm -rf $ROOTFS/var/lib && \
+    rm -rf $ROOTFS/var/cache && \
+    rm -rf $ROOTFS/var && \
+    mkdir $ROOTFS/var
+
+# get back var/local
+RUN if [ -d var-local ]; then \
+        mv var-local $ROOTFS/var/local; \
+    fi
+
+# get back var/lib/$VIRT_TECH
+RUN if [ -d "var-lib-$VIRT_TECH" ]; then \
+        mkdir $ROOTFS/var/lib; \
+        mv var-lib-$VIRT_TECH $ROOTFS/var/lib/$VIRT_TECH; \
+    fi
+
+# create sysroot directory to which physical sysroot will be mounted
 RUN mkdir -p $ROOTFS/sysroot && \
-    ln -v -sf /sysroot/ostree $ROOTFS/ostree && \
+    ln -sf sysroot/ostree $ROOTFS/ostree && \
     mkdir -p $ROOTFS/usr/rootdirs && \
-    mkdir -p $ROOTFS/usr/etc && \
-    cp -a $ROOTFS/etc/. $ROOTFS/usr/etc/ && \
-    echo -n "${MACHINE_NAME}" > $ROOTFS/usr/etc/hostname && \
-    ln -v -sf /run/resolv.conf $ROOTFS/usr/etc/resolv.conf && \
-    mkdir -v -p $ROOTFS/usr/share/sota && \
-    echo -n "${OSTREE_BRANCHNAME}" > $ROOTFS/usr/share/sota/branchname && \
-    rm -rf $ROOTFS/etc
+    mv $ROOTFS/etc $ROOTFS/usr/
+
+# set hostname
+RUN echo -n "${MACHINE_NAME}" > $ROOTFS/usr/etc/hostname
+
+# make this symlink otherwise '/etc/resolv.conf' will be reported
+# as modified when running `ostree admin config-diff` because
+# it will eventually be updated in the runtime
+RUN ln -sf /run/resolv.conf $ROOTFS/usr/etc/resolv.conf
+
+# preserve OSTREE_BRANCHNAME for future information
+RUN mkdir -p $ROOTFS/usr/share/sota && \
+    echo -n "${OSTREE_BRANCHNAME}" > $ROOTFS/usr/share/sota/branchname
 
 # ----------------------
 # Rootdirs layout
@@ -233,40 +270,52 @@ RUN mkdir -p "$ROOTFS/var/rootdirs" && \
     if [ -d "$ROOTFS/home" ]; then \
         mv "$ROOTFS/home" "$ROOTFS/var/rootdirs/"; \
     fi && \
-    ln -sf /var/rootdirs/home "$ROOTFS/home" && \
+    ln -sf var/rootdirs/home "$ROOTFS/home" && \
     \
     # standard dirs
     for dir in media mnt opt srv; do \
         rm -rf "$ROOTFS/$dir" && \
-        ln -sf "/var/rootdirs/$dir" "$ROOTFS/$dir"; \
+        ln -sf "var/rootdirs/$dir" "$ROOTFS/$dir"; \
     done && \
     \
     # root home
     if [ -d "$ROOTFS/root" ]; then \
         mv "$ROOTFS/root" "$ROOTFS/var/roothome"; \
     fi && \
-    ln -sf /var/roothome "$ROOTFS/root"
+    ln -sf var/roothome "$ROOTFS/root"
 
 # ----------------------
 # usr/local handling
 # ----------------------
-RUN rm -v -rf $ROOTFS/usr/local && \
-    ln -v -sf ../var/usrlocal $ROOTFS/usr/local
+RUN rm -rf $ROOTFS/usr/local && \
+    ln -sf ../var/usrlocal $ROOTFS/usr/local
 
 # ------------------------
 # OSTree commit
 # ------------------------
 RUN rm -rf $ROOTFS/dev $ROOTFS/proc $ROOTFS/sys $ROOTFS/run && \
     mkdir -p $ROOTFS/dev $ROOTFS/proc $ROOTFS/sys $ROOTFS/run
-RUN mkdir -p /out/ostree-repo && \
-    ostree --repo=/out/ostree-repo init --mode=archive-z2 && \
-    commit_hash=$(ostree --repo=/out/ostree-repo commit \
+
+# init empty repo if needed
+RUN mkdir -p /out/ostree-repo
+RUN if ! ostree --repo=/out/ostree-repo refs 2>&1 > /dev/null; then \
+        echo "creating new ostree repo..."; \
+        ostree --repo=/out/ostree-repo init --mode=archive-z2; \
+    else \
+        echo "reusing existing ostree repo with the following branches:"; \
+        ostree --repo=/out/ostree-repo refs; \
+    fi
+
+# commit the result
+RUN ostree_commit_hash=$(ostree --repo=/out/ostree-repo commit \
         --tree=dir=$ROOTFS \
+        --skip-if-unchanged \
         --branch=$OSTREE_BRANCHNAME \
         --subject="NULIX OS" \
         --body="Version $DISTRO_VERSION" \
-        --skip-if-unchanged) && \
-    echo "$commit_hash" > /out/ostree.commit && \
+        --add-metadata-string=version="$DISTRO_VERSION" \
+        ${EXTRA_OSTREE_COMMIT}) && \
+    echo "$ostree_commit_hash" > /out/ostree.commit && \
     ostree --repo=/out/ostree-repo summary -u
 
 # ------------------------

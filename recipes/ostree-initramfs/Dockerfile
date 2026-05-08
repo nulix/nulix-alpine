@@ -17,7 +17,7 @@ RUN apk fetch --no-cache busybox && \
     rm busybox-*.apk && \
     cd initramfs/bin && \
     for i in $(busybox --list); do \
-    ln -sf /bin/busybox $i; \
+      ln -sf /bin/busybox $i; \
     done
 RUN cd initramfs && \
     mkdir lib && \
@@ -43,7 +43,7 @@ RUN cd initramfs && \
 # make uboot image
 RUN cd initramfs && \
     mkimage -A $MACHINE_ARCH -O linux -T ramdisk -C gzip \
-    -n "OSTree initramfs" -d initramfs.img.gz initramfs.img
+      -n "OSTree initramfs" -d initramfs.img.gz initramfs.img
 
 # export stage
 FROM scratch AS export
