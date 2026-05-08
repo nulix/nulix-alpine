@@ -12,8 +12,9 @@ ARG SERIAL_BAUD
 ARG BOOT_DEV_PART
 ARG UBOOT_ENV_SIZE
 ARG PACKAGES=""
+ARG USER="nulix"
 ARG SSH_PUBLIC_KEY=""
-ARG OSTREE_BRANCHNAME="nulix/stable"
+ARG OSTREE_BRANCHNAME="stable/$MACHINE_NAME"
 ARG DISTRO_VERSION="unknown"
 
 ENV ROOTFS="/rootfs"
@@ -153,8 +154,14 @@ RUN rm $ROOTFS/etc/inittab
 # ------------------------
 # Basic system config
 # ------------------------
-# set root password
-RUN echo "root:root" | chroot $ROOTFS chpasswd
+# disable root login
+RUN chroot $ROOTFS passwd -l root
+
+# provision regular user
+RUN chroot $ROOTFS adduser -D ${USER}
+RUN echo "${USER}:nulix" | chroot $ROOTFS chpasswd
+RUN echo "${USER} ALL=(ALL) ALL" > $ROOTFS/etc/sudoers.d/nulix && \
+    chmod 0440 $ROOTFS/etc/sudoers.d/nulix
 
 # add login console
 RUN grep -q "$SERIAL_PORT" $ROOTFS/etc/securetty || echo "$SERIAL_PORT" >> $ROOTFS/etc/securetty
@@ -169,11 +176,13 @@ RUN printf "" > $ROOTFS/etc/motd
 RUN printf "" > $ROOTFS/etc/fstab
 
 # SSH setup
+RUN echo "PermitRootLogin no" > $ROOTFS/etc/ssh/sshd_config.d/sshd.conf && \
+    echo "PasswordAuthentication no" >> $ROOTFS/etc/ssh/sshd_config.d/sshd.conf
 RUN if [ -n "$SSH_PUBLIC_KEY" ]; then \
-    mkdir -p $ROOTFS/root/.ssh && \
-    echo "$SSH_PUBLIC_KEY" > $ROOTFS/root/.ssh/authorized_keys && \
-    chmod 600 $ROOTFS/root/.ssh/authorized_keys; \
-fi
+        mkdir -p $ROOTFS/home/${USER}/.ssh && \
+        echo "$SSH_PUBLIC_KEY" > $ROOTFS/home/${USER}/.ssh/authorized_keys && \
+        chmod 600 $ROOTFS/home/${USER}/.ssh/authorized_keys; \
+    fi
 
 # package manifest
 RUN mkdir -p /out  && \

@@ -62,7 +62,7 @@ target "ostree-rootfs" {
     MACHINE_NAME = "${MACHINE_NAME}"
     MACHINE_ARCH = "${MACHINE_ARCH}"
     MACHINE_VIRT = "${MACHINE_VIRT}"
-    PACKAGES = "alpine-base,busybox,openssh,ca-certificates,tzdata,curl,chrony,dosfstools,e2fsprogs,e2fsprogs-extra,parted,htop,iproute2,agetty,agetty-openrc,openrc,openrc-init"
+    PACKAGES = "alpine-base,busybox,openssh,ca-certificates,tzdata,curl,chrony,dosfstools,e2fsprogs,e2fsprogs-extra,parted,htop,iproute2,agetty,agetty-openrc,openrc,openrc-init,sudo"
   }
 
   contexts = {
