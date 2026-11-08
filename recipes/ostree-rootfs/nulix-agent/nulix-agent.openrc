@@ -1,0 +1,16 @@
+#!/sbin/openrc-run
+name="NULIX device agent"
+description="Device enrollment and authenticated platform check-ins"
+command="/usr/bin/python3"
+command_args="/usr/libexec/nulix-agent.py run --state-dir /var/lib/nulix --bootstrap /mnt/boot/nulix-enrollment.json"
+command_background=true
+pidfile="/run/nulix-agent.pid"
+output_log="/var/log/nulix-agent.log"
+error_log="/var/log/nulix-agent.log"
+depend() {
+    need net localmount
+    after chronyd touch-ostree docker
+}
+start_pre() {
+    checkpath --directory --mode 0700 /var/lib/nulix
+}

@@ -40,7 +40,7 @@ RUN mkdir -p $ROOTFS/etc/apk && \
 RUN apk add --no-cache \
     --root $ROOTFS \
     --initdb \
-    busybox ostree util-linux \
+    busybox ostree util-linux python3 openssl ca-certificates \
     $(echo "$PACKAGES" | tr ',' ' ') \
     $( \
         if [ "$MACHINE_VIRT" = "docker" ]; then \
@@ -73,13 +73,17 @@ RUN K_VER=$(ls kernel-modules) && \
 COPY openrc/tmpfiles.initd $ROOTFS/etc/init.d/tmpfiles
 COPY openrc/resize-rootfs.initd $ROOTFS/etc/init.d/resize-rootfs
 COPY openrc/touch-ostree.initd $ROOTFS/etc/init.d/touch-ostree
-COPY openrc/portainer.initd $ROOTFS/etc/init.d/portainer
+
+# Public agent only: per-device keys are generated on the device at enrollment.
+COPY nulix-agent/nulix-agent.py $ROOTFS/usr/libexec/nulix-agent.py
+COPY nulix-agent/nulix-agent.openrc $ROOTFS/etc/init.d/nulix-agent
+RUN chmod 755 $ROOTFS/usr/libexec/nulix-agent.py $ROOTFS/etc/init.d/nulix-agent && \
+    ln -s ../libexec/nulix-agent.py $ROOTFS/usr/sbin/nulix-agent
 
 # make initd scripts executable
 RUN chmod +x $ROOTFS/etc/init.d/tmpfiles && \
     chmod +x $ROOTFS/etc/init.d/resize-rootfs && \
-    chmod +x $ROOTFS/etc/init.d/touch-ostree && \
-    chmod +x $ROOTFS/etc/init.d/portainer
+    chmod +x $ROOTFS/etc/init.d/touch-ostree
 
 # configure console
 RUN cd $ROOTFS/etc/conf.d && \
@@ -122,6 +126,8 @@ RUN set -eux; \
     ln -sf /etc/init.d/savecache "$ROOTFS/etc/runlevels/shutdown/savecache"; \
     \
     # default
+    ln -sf /etc/init.d/nulix-agent "$ROOTFS/etc/runlevels/default/nulix-agent"; \
+    ln -sf /etc/init.d/networking "$ROOTFS/etc/runlevels/default/networking"; \
     ln -sf /etc/init.d/touch-ostree "$ROOTFS/etc/runlevels/default/touch-ostree"; \
     ln -sf /etc/init.d/sshd "$ROOTFS/etc/runlevels/default/sshd"; \
     ln -sf /etc/init.d/agetty.${SERIAL_PORT} "$ROOTFS/etc/runlevels/default/agetty.${SERIAL_PORT}"; \
@@ -130,8 +136,7 @@ RUN set -eux; \
     # docker
     if [ "$MACHINE_VIRT" = "docker" ]; then \
         mkdir -p $ROOTFS/var/lib/docker && \
-        ln -sf /etc/init.d/docker "$ROOTFS/etc/runlevels/default/docker" && \
-        ln -sf /etc/init.d/portainer "$ROOTFS/etc/runlevels/default/portainer"; \
+        ln -sf /etc/init.d/docker "$ROOTFS/etc/runlevels/default/docker"; \
     fi
 
 # install openrc-init reboot and poweroff scripts
@@ -298,6 +303,11 @@ RUN mkdir -p "$ROOTFS/var/rootdirs" && \
 # ----------------------
 RUN rm -rf $ROOTFS/usr/local && \
     ln -sf ../var/usrlocal $ROOTFS/usr/local
+
+# Build-time SBOM is part of the immutable OSTree tree.
+COPY nulix-agent/build-sbom.py /tmp/build-sbom.py
+RUN python3 /tmp/build-sbom.py "$ROOTFS" "$(ls $ROOTFS/usr/lib/modules | head -n 1)" && \
+    cp "$ROOTFS/usr/share/nulix/sbom.spdx.json" /out/sbom.spdx.json
 
 # ------------------------
 # OSTree commit
