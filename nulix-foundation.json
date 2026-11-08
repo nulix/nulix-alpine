@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "name": "NULIX Alpine OS",
+  "machines": [
+    {
+      "id": "raspberrypi-3-model-b",
+      "buildProfile": "raspberry-pi-3",
+      "hosted": true,
+      "profileReady": true,
+      "delivery": "reflash",
+      "components": {
+        "kernel": "raspberrypi/linux@a1073743767f9e7fdc7017ababd2a07ea0c97c1c",
+        "bootloader": "u-boot/u-boot@e50b1e8715011def8aff1588081a2649a2c6cd47",
+        "firmware": "raspberrypi/firmware@f1ea7092589bc9627c23916132baa7841932b707",
+        "agent": "0.4.0"
+      }
+    }
+  ]
+}
