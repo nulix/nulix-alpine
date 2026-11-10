@@ -3,7 +3,23 @@ name: Build image
 on:
   push:
     branches: [main]
+    paths:
+      - builder/**
+      - recipes/**
+      - machines/**
+      - docker-bake.hcl
+      - hosted-machine-assets.hcl
+      - scripts/resolve-machine-assets.py
+      - .github/workflows/build.yml
   pull_request:
+    paths:
+      - builder/**
+      - recipes/**
+      - machines/**
+      - docker-bake.hcl
+      - hosted-machine-assets.hcl
+      - scripts/resolve-machine-assets.py
+      - .github/workflows/build.yml
   workflow_dispatch:
 
 permissions:
@@ -31,10 +47,10 @@ jobs:
       - name: Build NULIX Alpine
         run: |
           args=(-f docker-bake.hcl -f machines/raspberry-pi-3.hcl)
-          if test -f machine-assets.lock.json || test -f hosted-machine-assets.hcl; then
-            python3 scripts/machine-assets.py check
-            args+=(-f hosted-machine-assets.hcl)
-          fi
+          python3 scripts/resolve-machine-assets.py > /tmp/nulix-machine-assets.json
+          cat /tmp/nulix-machine-assets.json
+          overlay=$(python3 -c 'import json; print(json.load(open("/tmp/nulix-machine-assets.json"))["overlay"] or "")')
+          if test -n "$overlay"; then args+=(-f "$overlay"); fi
           docker buildx bake "${args[@]}" ostree-rootfs ostree-sd-image --provenance=false
 
       - name: Upload OS image

@@ -45,7 +45,7 @@ jobs:
         run: printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GH_ACTOR" --password-stdin
       - name: Test asset locking
         run: python3 -m unittest discover -s tests -p 'machine_assets_test.py'
-      - name: Compile and publish immutable components
+      - name: Reuse published components and build only missing inputs
         env:
           REPOSITORY: ${{ github.repository }}
         run: python3 scripts/machine-assets.py publish --repository "$REPOSITORY"
@@ -61,6 +61,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BASE_BRANCH: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+          SERVER_URL: ${{ github.server_url }}
         run: |
           if git diff --quiet -- machine-assets.lock.json hosted-machine-assets.hcl && test -z "$(git ls-files --others --exclude-standard -- machine-assets.lock.json hosted-machine-assets.hcl)"; then
             echo 'Component pins are already current.'
@@ -73,8 +75,10 @@ jobs:
           git add machine-assets.lock.json hosted-machine-assets.hcl
           git commit -m 'build: pin prebuilt Raspberry Pi 3 foundation components'
           git push origin "$branch"
-          if ! gh pr list --head "$branch" --base "$BASE_BRANCH" --json number --jq '.[].number' | grep -q .; then
-            gh pr create --base "$BASE_BRANCH" --head "$branch" --title 'Pin prebuilt Raspberry Pi 3 foundation components' --body 'Pins the published kernel, matching modules and DTBs, U-Boot, firmware and initramfs by GHCR digest. Merge after review, ensure the runner can pull these packages, and publish a foundation release. User OS builds will reuse these components and build only the rootfs and image.'
+          if ! gh pr create --base "$BASE_BRANCH" --head "$branch" --title 'Pin prebuilt Raspberry Pi 3 foundation components' --body 'Pins the published kernel, matching modules and DTBs, U-Boot, firmware and initramfs by GHCR digest. Merge after review, ensure the runner can pull these packages, and publish a foundation release. User OS builds will reuse these components and build only the rootfs and image.'; then
+            echo '::warning::Images and digest-pin branch were published. Automatic PR creation is unavailable; open the PR manually using the workflow summary.'
+            compare_url="$SERVER_URL/$REPOSITORY/compare/$BASE_BRANCH...$branch?expand=1"
+            printf '\n### Manual review needed\n\nImages are published. [Create the digest-pin pull request](%s), then review and merge it before releasing the foundation.\n' "$compare_url" >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Publication instructions
         if: always()

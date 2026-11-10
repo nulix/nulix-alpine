@@ -20,9 +20,19 @@ The agent remains part of the rootfs recipe. This does not introduce APK package
 2. The workflow signs in using its `GITHUB_TOKEN` with `packages: write`, publishes all
    four images, saves their immutable digests, and opens a PR containing
    `machine-assets.lock.json` and `hosted-machine-assets.hcl`. It needs the repository
-   Actions setting **Allow GitHub Actions to create and approve pull requests**.
-   If PR creation is disabled, download the `raspberry-pi-3-machine-assets` workflow
-   artifact and commit both files together instead. Do not invent placeholder digests.
+   Actions setting **Allow GitHub Actions to create and approve pull requests** for
+   automatic PR creation. If the repository checkbox is disabled, an organization
+   owner can enable it under organization **Settings → Actions → General → Workflow
+   permissions** (subject to enterprise policy).
+   Publication does not require that setting: if automatic PR creation is blocked,
+   the job succeeds with a warning and a manual PR link in its workflow summary.
+   The digest-pin branch has already been pushed. Open that link, review and merge
+   the PR yourself; no recompilation is needed. Alternatively, download the
+   `raspberry-pi-3-machine-assets` workflow artifact and commit both files together.
+   Do not invent placeholder digests.
+   Committed pins are recommended for reviewed foundation releases. Updated builders
+   can also discover published components before the pin PR is merged, by matching
+   the exact recipe-input hash and resolving it to an immutable digest.
 3. GHCR packages initially have private visibility, even for public repositories.
    Make these four foundation packages public in their package settings so local and
    Oracle builders can pull anonymously. Alternatively, authenticate the OS user that
@@ -41,10 +51,48 @@ Publication uses registry build caches to preserve intermediate compiler work ac
 workflow runs. Do not delete image versions still referenced by foundation locks.
 Cache tags may move; the component references consumed by OS builds always use digests.
 
+## Incremental publication
+
+The publishing workflow first checks GHCR for `input-<component-hash>` tags. It builds
+only components whose matching artifact is absent. A kernel recipe/config/source
+change leaves U-Boot, firmware and initramfs reusable. Shared builder changes affect
+the three components that use that builder; initramfs has its own Alpine toolchain.
+Rootfs, agent, documentation and pin-merge changes do not trigger component publication.
+Changes to shared Bake files may run the check, but unchanged component inputs do not
+build or republish images.
+
+Existing aggregate-hash publications are adopted by adding component lookup tags,
+without compiling or uploading the artifact layers again. Aggregate tags remain
+available for existing hosted runners and CLIs. When both tags are current, publication
+does not invoke Buildx builds or registry tag writes. The pin file preserves its
+original source revision when the inputs and digests have not changed, avoiding
+metadata-only pin update PRs after merges.
+
+The workflow summary lists **Reused** and **Built** components. An authentication or
+registry error fails the publication check instead of starting an unnecessary compile.
+The image workflow also filters push/PR paths: unrelated documentation, manifest
+metadata and lock-metadata-only commits do not assemble another image. Changes to
+actual recipes, machine profiles or the digest overlay still build the image.
+
 ## Subsequent builds
 
-`nulix build --machine raspberry-pi-3 --version 1.2.8` automatically uses the pins
-with the updated CLI. For direct Bake:
+`nulix build --machine raspberry-pi-3 --version 1.2.8` automatically uses committed
+pins with the updated CLI. If no pins are committed, it looks up matching published
+components in GHCR. It reuses each available component and compiles only those that
+are missing or inaccessible. It never selects an unrelated `latest` image. Registry
+access failures are reported in the fallback summary.
+
+The image workflow does the same automatically. For direct Bake without committed pins:
+
+```sh
+python3 scripts/resolve-machine-assets.py
+docker buildx bake -f docker-bake.hcl -f machines/raspberry-pi-3.hcl \
+  -f .nulix/machine-assets.hcl
+```
+
+`.nulix/resolved-machine-assets.json` records the actual digests, reused components,
+and source fallbacks for that build. These generated files are ignored by Git.
+When using committed pins directly:
 
 ```sh
 python3 scripts/machine-assets.py check

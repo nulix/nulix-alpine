@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -24,20 +25,43 @@ def bake():
             '-f', 'machines/' + MACHINE + '.hcl']
 
 
-def fingerprint():
+def fingerprint(component=None):
     # Hash effective component recipes, not the rootfs, agent or user profile.
     plan = json.loads(run(bake() + ['--print', *COMPONENTS], capture=True))['target']
+    selected = COMPONENTS if component is None else (component,)
+    if any(name not in COMPONENTS for name in selected):
+        raise ValueError('Unknown machine component')
+    uses_builder = component != 'ostree-initramfs'
+    targets = (('nulix-builder',) if uses_builder else ()) + selected
     recipes = {name: {key: value for key, value in plan[name].items()
                      if key in ('context', 'dockerfile', 'args', 'contexts', 'platforms')}
-               for name in ('nulix-builder', *COMPONENTS)}
+               for name in targets}
     files = {}
-    for directory in ('builder', *(f'recipes/{name}' for name in COMPONENTS)):
+    for directory in (('builder',) if uses_builder else ()) + tuple(f'recipes/{name}' for name in selected):
         for file in sorted((ROOT / directory).rglob('*')):
             if file.is_symlink():
                 raise ValueError('Machine recipes must not contain symlinks: ' + str(file))
             if file.is_file():
                 files[file.relative_to(ROOT).as_posix()] = hashlib.sha256(file.read_bytes()).hexdigest()
     return hashlib.sha256(json.dumps({'recipes': recipes, 'files': files}, sort_keys=True).encode()).hexdigest()
+
+
+def published_digest(image):
+    """Missing manifests can build; authentication/network failures cannot trigger builds."""
+    result = subprocess.run(['docker', 'buildx', 'imagetools', 'inspect', image,
+                             '--format', '{{json .Manifest}}'], cwd=ROOT,
+                            capture_output=True, text=True, timeout=40)
+    if result.returncode:
+        error = result.stderr.lower()
+        if any(word in error for word in ('unauthorized', 'denied', 'forbidden')):
+            raise ValueError('GHCR access denied; no compilation started for ' + image)
+        if any(word in error for word in ('not found', 'manifest unknown', 'name unknown')):
+            return None
+        raise ValueError('GHCR lookup failed; refusing unnecessary compilation for ' + image)
+    digest = json.loads(result.stdout).get('digest', '')
+    if not re.fullmatch(r'sha256:[a-f0-9]{64}', digest):
+        raise ValueError('GHCR returned an invalid component digest')
+    return digest
 
 
 def overlay(lock):
@@ -79,28 +103,58 @@ def publish(repository):
     output = ROOT / 'out' / 'machine-assets'
     output.mkdir(parents=True, exist_ok=True)
     components = {}
+    component_inputs = {name: fingerprint(name) for name in COMPONENTS}
+    reused, built = [], []
     # Sequential publication avoids four compilers competing for one runner.
     for component in COMPONENTS:
         image = f'ghcr.io/{repository}/{MACHINE}-{component}'
+        tag = image + ':input-' + component_inputs[component]
+        legacy_tag = image + ':' + inputs
+        digest = published_digest(tag)
+        legacy_digest = published_digest(legacy_tag)
+        # Bootstrap from the original aggregate-input tags without recompilation.
+        if digest is None and legacy_digest is not None:
+            digest = legacy_digest
+            run(['docker', 'buildx', 'imagetools', 'create', '--prefer-index=false',
+                 '--tag', tag, image + '@' + digest])
+        if digest is not None:
+            reused.append(component)
+            print('REUSE ' + component + ': matching published inputs', flush=True)
+        else:
+            built.append(component)
+            print('BUILD ' + component + ': no matching published inputs', flush=True)
         metadata = output / (component + '.json')
-        run(bake() + [component,
-            '--set', component + '.output=type=image,push=true',
-            '--set', component + '.tags=' + image + ':' + inputs,
-            '--set', component + '.labels.org.opencontainers.image.source=https://github.com/' + repository,
-            '--set', component + '.labels.org.opencontainers.image.revision=' + revision,
-            '--set', component + '.cache-from=type=registry,ref=' + image + ':buildcache',
-            '--set', component + '.cache-to=type=registry,ref=' + image + ':buildcache,mode=max',
-            '--provenance=false', '--metadata-file', str(metadata)])
-        digest = json.loads(metadata.read_text())[component]['containerimage.digest']
+        if digest is None:
+            run(bake() + [component,
+                '--set', component + '.output=type=image,push=true',
+                '--set', component + '.tags=' + tag,
+                '--set', component + '.labels.org.opencontainers.image.source=https://github.com/' + repository,
+                '--set', component + '.labels.org.opencontainers.image.revision=' + revision,
+                '--set', component + '.cache-from=type=registry,ref=' + image + ':buildcache',
+                '--set', component + '.cache-to=type=registry,ref=' + image + ':buildcache,mode=max',
+                '--provenance=false', '--metadata-file', str(metadata)])
+            digest = json.loads(metadata.read_text())[component]['containerimage.digest']
         if not re.fullmatch(r'sha256:[a-f0-9]{64}', digest):
             raise ValueError('BuildKit returned an invalid image digest')
         components[component] = image + '@' + digest
+        # Keep older deployed consumers compatible with the aggregate tag scheme.
+        if legacy_digest != digest:
+            run(['docker', 'buildx', 'imagetools', 'create', '--prefer-index=false',
+                 '--tag', legacy_tag, image + '@' + digest])
+    previous = json.loads((ROOT / LOCK).read_text()) if (ROOT / LOCK).is_file() else {}
+    if previous.get('inputsSha256') == inputs and previous.get('components') == components:
+        revision = previous.get('sourceCommit', revision)
     lock = {'schemaVersion': 1, 'machine': MACHINE, 'sourceCommit': revision,
-            'inputsSha256': inputs, 'components': components}
+            'inputsSha256': inputs, 'componentInputs': component_inputs, 'components': components}
     # Only replace the lock once every publication succeeds.
     (ROOT / LOCK).write_text(json.dumps(lock, indent=2) + '\n')
     (ROOT / OVERLAY).write_text(overlay(lock))
     check()
+    summary = 'Reused: ' + (', '.join(reused) or 'none') + '\nBuilt: ' + (', '.join(built) or 'none') + '\n'
+    print(summary)
+    if os.environ.get('GITHUB_STEP_SUMMARY'):
+        with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as stream:
+            stream.write('\n### Component publication\n\n' + summary.replace('\n', '  \n'))
 
 
 if __name__ == '__main__':
@@ -110,5 +164,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
     try:
         publish(args.repository) if args.command == 'publish' else check()
-    except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:
+    except (ValueError, KeyError, OSError, subprocess.SubprocessError) as error:
         parser.exit(1, 'Machine assets: ' + str(error) + '\n')
