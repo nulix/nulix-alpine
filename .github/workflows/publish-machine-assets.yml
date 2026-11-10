@@ -1,0 +1,84 @@
+name: Publish foundation machine assets
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - builder/**
+      - recipes/linux-kernel/**
+      - recipes/u-boot/**
+      - recipes/firmware/**
+      - recipes/ostree-initramfs/**
+      - machines/raspberry-pi-3.hcl
+      - docker-bake.hcl
+      - scripts/machine-assets.py
+      - .github/workflows/publish-machine-assets.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: foundation-machine-assets-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish Raspberry Pi 3 components to GHCR
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 240
+    permissions:
+      contents: write
+      packages: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+      - name: Free space for kernel compilation
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          df -h /
+      - uses: docker/setup-buildx-action@v4
+      - name: Sign in to GHCR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+        run: printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GH_ACTOR" --password-stdin
+      - name: Test asset locking
+        run: python3 -m unittest discover -s tests -p 'machine_assets_test.py'
+      - name: Compile and publish immutable components
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: python3 scripts/machine-assets.py publish --repository "$REPOSITORY"
+      - name: Save reviewed digest pins
+        uses: actions/upload-artifact@v7
+        with:
+          name: raspberry-pi-3-machine-assets
+          path: |
+            machine-assets.lock.json
+            hosted-machine-assets.hcl
+          retention-days: 30
+      - name: Open foundation asset update for review
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE_BRANCH: ${{ github.ref_name }}
+        run: |
+          if git diff --quiet -- machine-assets.lock.json hosted-machine-assets.hcl && test -z "$(git ls-files --others --exclude-standard -- machine-assets.lock.json hosted-machine-assets.hcl)"; then
+            echo 'Component pins are already current.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          branch="foundation-assets/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          git checkout -b "$branch"
+          git add machine-assets.lock.json hosted-machine-assets.hcl
+          git commit -m 'build: pin prebuilt Raspberry Pi 3 foundation components'
+          git push origin "$branch"
+          if ! gh pr list --head "$branch" --base "$BASE_BRANCH" --json number --jq '.[].number' | grep -q .; then
+            gh pr create --base "$BASE_BRANCH" --head "$branch" --title 'Pin prebuilt Raspberry Pi 3 foundation components' --body 'Pins the published kernel, matching modules and DTBs, U-Boot, firmware and initramfs by GHCR digest. Merge after review, ensure the runner can pull these packages, and publish a foundation release. User OS builds will reuse these components and build only the rootfs and image.'
+          fi
+      - name: Publication instructions
+        if: always()
+        run: |
+          echo '### Foundation machine assets' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Merge the digest-pin PR before publishing a new foundation release. If PR creation is disabled, download the workflow artifact and commit both files manually.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'GHCR packages start private. Make these foundation packages public once, or configure read:packages credentials on the builder. Never add credentials to an OS image.' >> "$GITHUB_STEP_SUMMARY"

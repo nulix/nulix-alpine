@@ -2,3 +2,4 @@
 .DS_Store
 out/
 nulix
+__pycache__/
