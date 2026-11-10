@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "machine": "raspberry-pi-3",
+  "sourceCommit": "96c3415e7780e6bce25eef452ca9c7d67e44dff0",
+  "inputsSha256": "4790bb67cfdd015b5414713e1fa0403fef2ec56d262476de736de6ee0761dd52",
+  "componentInputs": {
+    "linux-kernel": "c7e0273fca240393246744830d0d6d6a1ac575c609808c20b1cf6f47e3c06b0f",
+    "u-boot": "9d773920dc287b9d1e4a4230adc353d0855ce25b7c9e63d76a8e4351f924a4ab",
+    "firmware": "c86348ea04e8a30fd38bc5472846f2a3dfa6400ebb7c53a1ba5c6a70472dabb4",
+    "ostree-initramfs": "60967c01ce850a98a663bd7e0d42526a321d28b778de730f1f5fb71d89a16a8d"
+  },
+  "components": {
+    "linux-kernel": "ghcr.io/nulix/nulix-alpine/raspberry-pi-3-linux-kernel@sha256:6ac5027ece9139927eebf204ac03ff8d9327bfa5596eeade091d374f5c9179c6",
+    "u-boot": "ghcr.io/nulix/nulix-alpine/raspberry-pi-3-u-boot@sha256:7bacf5bba9da3cbfb50d83dd1259303278b6980cdcfe8a7500732d4d296a6420",
+    "firmware": "ghcr.io/nulix/nulix-alpine/raspberry-pi-3-firmware@sha256:1fd9f6d481d19ec0e619d1922a111bd492f72494d7e00ec6d6b25113dc42d0ea",
+    "ostree-initramfs": "ghcr.io/nulix/nulix-alpine/raspberry-pi-3-ostree-initramfs@sha256:d9cac17328e654701d2fe2ddff91026056ae045683d36c46a4603988768b9677"
+  }
+}
