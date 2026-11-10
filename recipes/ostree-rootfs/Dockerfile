@@ -204,7 +204,8 @@ RUN sed -i "s/@@ENV_SIZE@@/${UBOOT_ENV_SIZE}/" $ROOTFS/etc/fw_env.config
 # ----------------------
 # OSTree preparations
 # ----------------------
-RUN apk add --no-cache ostree
+# Build-host tools are separate from packages installed into $ROOTFS.
+RUN apk add --no-cache ostree python3
 
 # placeholder for ostree boot files
 RUN mkdir $ROOTFS/boot
