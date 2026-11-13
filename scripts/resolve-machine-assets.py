@@ -5,6 +5,7 @@ Also distributed as scripts/resolve-machine-assets.py in nulix-alpine and instal
 beside the hosted runner. Keep those deployment copies identical.
 """
 import argparse
+import runpy
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
@@ -55,7 +56,7 @@ def inspect(image):
 def render(components):
     lines = ['# Resolved for this build; references are immutable GHCR digests.',
              'group "default" { targets = ["ostree-rootfs", "ostree-sd-image"] }']
-    for target, names in [('ostree-rootfs', ('linux-kernel', 'ostree-initramfs')),
+    for target, names in [('ostree-rootfs', (('rootfs-base',) if 'rootfs-base' in components else ()) + ('linux-kernel', 'ostree-initramfs')),
                           ('ostree-sd-image', ('linux-kernel', 'u-boot', 'firmware'))]:
         lines += ['', f'target "{target}" {{', '  contexts = {']
         lines += [f'    {name} = "docker-image://{components[name]}"' for name in names if name in components]
@@ -78,16 +79,39 @@ def prepare(root, repository='nulix/nulix-alpine', probe=inspect):
     if not (root / ('machines/' + MACHINE + '.hcl')).is_file():
         return {'overlay': None, 'reused': [], 'compiled': list(COMPONENTS), 'mode': 'source',
                 'reason': 'Foundation does not provide the supported machine profile'}
-    inputs = fingerprint(root)
-    images = [f'ghcr.io/{repository}/{MACHINE}-{name}:{inputs}' for name in COMPONENTS]
+    version_file = root / ('machines/' + MACHINE + '.components.json')
+    names = COMPONENTS
+    source_inputs = {}
+    if version_file.is_file() and tool.is_file():
+        publisher = runpy.run_path(str(tool))
+        versions = publisher['release_versions']()
+        names = publisher['PUBLISHED_COMPONENTS']
+        inputs = publisher['fingerprint']()
+        source_inputs = {name:publisher['fingerprint'](name) for name in names}
+        images = [publisher['release_descriptor'](repository, name, versions[name], source_inputs[name])['tag'] for name in names]
+    else:
+        inputs = fingerprint(root)
+        images = [f'ghcr.io/{repository}/{MACHINE}-{name}:{inputs}' for name in names]
     with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(probe, images))
-    components = {name: ref for name, (ref, _) in zip(COMPONENTS, results) if ref}
+    # During namespace migration, reuse exact old input pins before considering
+    # source compilation. These are not latest/version guesses.
+    if source_inputs:
+        for index,name in enumerate(names):
+            if results[index][0] or name not in COMPONENTS:
+                continue
+            old=f'ghcr.io/{repository}/{MACHINE}-{name}'
+            for tag in ('input-'+source_inputs[name],inputs):
+                ref,reason=probe(old+':'+tag)
+                if ref:
+                    results[index]=(ref,None)
+                    break
+    components = {name: ref for name, (ref, _) in zip(names, results) if ref}
     # Partial availability is useful: only unresolved contexts retain source targets.
     report = {'overlay': '.nulix/machine-assets.hcl', 'inputsSha256': inputs,
               'components': components, 'mode': 'discovered', 'reused': list(components),
-              'compiled': [name for name in COMPONENTS if name not in components],
-              'fallbacks': {name: reason for name, (_, reason) in zip(COMPONENTS, results) if reason}}
+              'compiled': [name for name in names if name not in components],
+              'fallbacks': {name: reason for name, (_, reason) in zip(names, results) if reason}}
     directory = root / '.nulix'
     if directory.is_symlink() or directory.exists() and not directory.is_dir():
         raise ValueError('.nulix must be a real directory')

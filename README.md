@@ -140,3 +140,11 @@ The build process is fully automated using:
 See [LICENSE](LICENSE)
 
 ---
+
+## Versioned OCI components
+
+Rootfs Base, kernel, bootloader, firmware and initramfs are published in machine-
+scoped release families such as
+`ghcr.io/nulix/nulix-alpine/raspberry-pi-3/linux-kernel/6.12`.
+See [component publication and consumption](docs/prebuilt-machine-assets.md) for
+release metadata, stable/dev namespaces, reuse rules and GitHub Actions setup.

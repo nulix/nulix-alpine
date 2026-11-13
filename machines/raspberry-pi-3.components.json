@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "machine": "raspberry-pi-3",
+  "components": {
+    "rootfs-base": {"version": "3.22.2", "line": "3.22"},
+    "linux-kernel": {"version": "6.12.62", "line": "6.12", "sourceRevision": "a1073743767f9e7fdc7017ababd2a07ea0c97c1c"},
+    "u-boot": {"version": "2025.10", "line": "2025.10", "sourceRevision": "e50b1e8715011def8aff1588081a2649a2c6cd47"},
+    "firmware": {"version": "2025.12.17-f1ea7092589b", "line": "2025.12", "sourceRevision": "f1ea7092589bc9627c23916132baa7841932b707"},
+    "ostree-initramfs": {"version": "1.0.0", "line": "1.0"}
+  }
+}

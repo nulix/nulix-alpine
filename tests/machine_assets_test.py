@@ -70,74 +70,118 @@ class MachineAssetsTests(unittest.TestCase):
             self.assertNotEqual(component_before['u-boot'], assets.fingerprint('u-boot'))
             self.assertEqual(component_before['ostree-initramfs'], assets.fingerprint('ostree-initramfs'))
 
-    def test_failed_publication_preserves_previous_pins(self):
-        with tempfile.TemporaryDirectory() as directory, patch.object(assets, 'ROOT', Path(directory)), patch.object(assets, 'fingerprint', return_value='a' * 64), patch.object(assets, 'published_digest', return_value=None):
-            (assets.ROOT / assets.LOCK).write_text('previous lock')
-            (assets.ROOT / assets.OVERLAY).write_text('previous overlay')
-            def publish_command(args, capture=False):
-                if args[0] == 'git': return 'c' * 40
-                raise subprocess.CalledProcessError(1, args)
-            with patch.object(assets, 'run', side_effect=publish_command), self.assertRaises(subprocess.CalledProcessError):
-                assets.publish('nulix/nulix-alpine')
-            self.assertEqual((assets.ROOT / assets.LOCK).read_text(), 'previous lock')
-            self.assertEqual((assets.ROOT / assets.OVERLAY).read_text(), 'previous overlay')
-
-    def test_publication_uses_reported_digests_not_tags(self):
-        with tempfile.TemporaryDirectory() as directory, patch.object(assets, 'ROOT', Path(directory)), patch.object(assets, 'fingerprint', return_value='a' * 64), patch.object(assets, 'published_digest', return_value=None), patch.object(assets, 'check') as checked:
-            def publish_command(args, capture=False):
-                if args[0] == 'git': return 'c' * 40
-                if 'imagetools' in args: return ''
-                metadata = Path(args[args.index('--metadata-file') + 1])
-                metadata.write_text(json.dumps({metadata.stem: {'containerimage.digest': 'sha256:' + 'd' * 64}}))
-                self.assertIn(metadata.stem + '.output=type=image,push=true', args)
-            with patch.object(assets, 'run', side_effect=publish_command): assets.publish('Nulix/Nulix-Alpine')
-            lock = json.loads((assets.ROOT / assets.LOCK).read_text())
-            self.assertEqual(len(lock['components']), 4)
-            self.assertTrue(all(ref.endswith('@sha256:' + 'd' * 64) for ref in lock['components'].values()))
-            checked.assert_called_once()
-
-    def test_unchanged_publication_never_builds_retags_or_changes_pin_provenance(self):
-        with tempfile.TemporaryDirectory() as directory, patch.object(assets, 'ROOT', Path(directory)), patch.object(assets, 'fingerprint', return_value='a' * 64), patch.object(assets, 'published_digest', return_value='sha256:' + 'b' * 64), patch.object(assets, 'check'):
-            lock = {'schemaVersion': 1, 'machine': assets.MACHINE, 'sourceCommit': 'e' * 40,
-                    'inputsSha256': 'a' * 64,
-                    'componentInputs': {name: 'a' * 64 for name in assets.COMPONENTS},
-                    'components': {name: 'ghcr.io/nulix/nulix-alpine/raspberry-pi-3-' + name + '@sha256:' + 'b' * 64 for name in assets.COMPONENTS}}
-            (assets.ROOT / assets.LOCK).write_text(json.dumps(lock, indent=2) + '\n')
-            before = (assets.ROOT / assets.LOCK).read_text()
-            with patch.object(assets, 'run', return_value='c' * 40) as command:
-                assets.publish('nulix/nulix-alpine')
-                command.assert_called_once_with(['git', 'rev-parse', 'HEAD'], capture=True)
-            self.assertEqual((assets.ROOT / assets.LOCK).read_text(), before)
-
-    def test_existing_aggregate_images_are_adopted_without_recompilation(self):
-        def lookup(image):
-            return None if ':input-' in image else 'sha256:' + 'b' * 64
-        with tempfile.TemporaryDirectory() as directory, patch.object(assets, 'ROOT', Path(directory)), patch.object(assets, 'fingerprint', return_value='a' * 64), patch.object(assets, 'published_digest', side_effect=lookup), patch.object(assets, 'check'), patch.object(assets, 'run', return_value='c' * 40) as command:
-            assets.publish('nulix/nulix-alpine')
-            docker_commands = [call.args[0] for call in command.call_args_list if call.args[0][0] == 'docker']
-            self.assertEqual(len(docker_commands), 4)
-            self.assertTrue(all('imagetools' in args and 'create' in args and '--prefer-index=false' in args for args in docker_commands))
-
-    def test_only_missing_kernel_is_built(self):
-        def lookup(image):
-            return 'sha256:' + 'b' * 64 if ':input-' in image and '-linux-kernel:' not in image else None
-        with tempfile.TemporaryDirectory() as directory, patch.object(assets, 'ROOT', Path(directory)), patch.object(assets, 'fingerprint', return_value='a' * 64), patch.object(assets, 'published_digest', side_effect=lookup), patch.object(assets, 'check'):
-            built = []
-            def command(args, capture=False):
-                if args[0] == 'git': return 'c' * 40
-                if 'imagetools' in args: return ''
-                metadata = Path(args[args.index('--metadata-file') + 1])
-                built.append(metadata.stem)
-                metadata.write_text(json.dumps({metadata.stem: {'containerimage.digest': 'sha256:' + 'd' * 64}}))
-            with patch.object(assets, 'run', side_effect=command):assets.publish('nulix/nulix-alpine')
-            self.assertEqual(built, ['linux-kernel'])
-
     def test_registry_error_does_not_trigger_compilation(self):
         for error in ('unauthorized', 'unexpected status 502'):
             result = subprocess.CompletedProcess([], 1, '', error)
             with self.subTest(error=error), patch.object(assets.subprocess, 'run', return_value=result), self.assertRaises(ValueError):
                 assets.published_digest('ghcr.io/nulix/kernel:input-hash')
 
+
+
+class VersionedPublicationTests(unittest.TestCase):
+    def versions(self):
+        return {'rootfs-base': {'version':'3.22.2','line':'3.22'},
+                'linux-kernel': {'version':'6.12.62','line':'6.12','sourceRevision':'1'*40},
+                'u-boot': {'version':'2025.10','line':'2025.10','sourceRevision':'2'*40},
+                'firmware': {'version':'2025.12.17-abcdef123456','line':'2025.12','sourceRevision':'3'*40},
+                'ostree-initramfs': {'version':'1.0.0','line':'1.0'}}
+
+    def fake_registry(self, missing=()):
+        registry={f'ghcr.io/nulix/nulix-alpine/raspberry-pi-3-{c}:input-'+('a'*64):'sha256:'+str(i+1)*64
+                  for i,c in enumerate(assets.COMPONENTS) if c not in missing}
+        builds=[];repackages=[];writes=[]
+        def lookup(image, **options): return registry.get(image)
+        def command(args,capture=False):
+            if args[0]=='git': return '' if args[1]=='status' else 'b'*40
+            if 'imagetools' in args:
+                tag=args[args.index('--tag')+1];registry[tag]=args[-1].split('@')[1];writes.append(tag);return ''
+            metadata=Path(args[args.index('--metadata-file')+1]);component=metadata.stem
+            tag=args[args.index('--tag')+1] if '--tag' in args else next(a.split('.tags=',1)[1] for a in args if '.tags=' in a)
+            digest='sha256:'+str(assets.PUBLISHED_COMPONENTS.index(component)+5)*64
+            if 'bake' in args:
+                builds.append(component);metadata.write_text(json.dumps({component:{'containerimage.digest':digest}}))
+            else:
+                dockerfile=(Path(args[-1])/'Dockerfile').read_text();self.assertNotIn('RUN ',dockerfile);self.assertIn('FROM ghcr.io/',dockerfile)
+                self.assertIn('io.nulix.machine',dockerfile);self.assertIn('org.opencontainers.image.version',dockerfile)
+                repackages.append(component);metadata.write_text(json.dumps({'containerimage.digest':digest}))
+            registry[tag]=digest
+            return ''
+        return registry,builds,repackages,writes,lookup,command
+
+    def test_machine_paths_full_versions_and_dev_channels(self):
+        info=self.versions()['linux-kernel']
+        stable=assets.release_descriptor('nulix/nulix-alpine','linux-kernel',info,'a'*64)
+        dev=assets.release_descriptor('nulix/nulix-alpine','linux-kernel',info,'a'*64,'dev')
+        self.assertEqual(stable['image'],'ghcr.io/nulix/nulix-alpine/raspberry-pi-3/linux-kernel/6.12')
+        self.assertTrue(dev['image'].endswith('/linux-kernel/6.12-dev'))
+        self.assertIn(':6.12.62-',stable['versionTag']);self.assertNotEqual(stable['tag'],dev['tag'])
+
+    def test_first_migration_repackages_hardware_layers_and_only_builds_rootfs_base(self):
+        with tempfile.TemporaryDirectory() as directory,patch.object(assets,'ROOT',Path(directory)),patch.object(assets,'release_versions',return_value=self.versions()),patch.object(assets,'fingerprint',return_value='a'*64),patch.object(assets,'check'):
+            registry,built,repacked,writes,lookup,command=self.fake_registry()
+            with patch.object(assets,'published_digest',side_effect=lookup),patch.object(assets,'run',side_effect=command):assets.publish('nulix/nulix-alpine')
+            self.assertEqual(built,['rootfs-base']);self.assertEqual(set(repacked),set(assets.COMPONENTS))
+            lock=json.loads((assets.ROOT/assets.LOCK).read_text());self.assertEqual(lock['schemaVersion'],2);self.assertEqual(len(lock['components']),5)
+            self.assertIn('/raspberry-pi-3/rootfs-base/3.22@',lock['components']['rootfs-base'])
+            self.assertEqual(assets.overlay(lock).count('docker-image://'),6)
+            self.assertTrue(all('/raspberry-pi-3/' in ref for ref in lock['components'].values()))
+
+    def test_unchanged_publications_do_not_rebuild_repackage_retag_or_change_source_pin(self):
+        with tempfile.TemporaryDirectory() as directory,patch.object(assets,'ROOT',Path(directory)),patch.object(assets,'release_versions',return_value=self.versions()),patch.object(assets,'fingerprint',return_value='a'*64),patch.object(assets,'check'):
+            registry,built,repacked,writes,lookup,command=self.fake_registry()
+            with patch.object(assets,'published_digest',side_effect=lookup),patch.object(assets,'run',side_effect=command):
+                assets.publish('nulix/nulix-alpine');before=(assets.ROOT/assets.LOCK).read_text()
+                built.clear();repacked.clear();writes.clear();assets.publish('nulix/nulix-alpine')
+            self.assertEqual(built,[]);self.assertEqual(repacked,[]);self.assertEqual(writes,[])
+            self.assertEqual((assets.ROOT/assets.LOCK).read_text(),before)
+
+    def test_missing_kernel_source_is_the_only_hardware_compiled(self):
+        with tempfile.TemporaryDirectory() as directory,patch.object(assets,'ROOT',Path(directory)),patch.object(assets,'release_versions',return_value=self.versions()),patch.object(assets,'fingerprint',return_value='a'*64),patch.object(assets,'check'):
+            registry,built,repacked,writes,lookup,command=self.fake_registry(missing=('linux-kernel',))
+            with patch.object(assets,'published_digest',side_effect=lookup),patch.object(assets,'run',side_effect=command):assets.publish('nulix/nulix-alpine')
+            self.assertEqual(built,['rootfs-base','linux-kernel']);self.assertEqual(set(repacked),{'u-boot','firmware','ostree-initramfs'})
+
+    def test_failure_does_not_replace_existing_locks_and_immutable_tags_cannot_move(self):
+        with tempfile.TemporaryDirectory() as directory,patch.object(assets,'ROOT',Path(directory)),patch.object(assets,'release_versions',return_value=self.versions()),patch.object(assets,'fingerprint',return_value='a'*64),patch.object(assets,'published_digest',return_value=None):
+            (assets.ROOT/assets.LOCK).write_text('previous pins');(assets.ROOT/assets.OVERLAY).write_text('previous overlay')
+            def fail(args,capture=False):
+                if args[0]=='git':return '' if args[1]=='status' else 'a'*40
+                raise subprocess.CalledProcessError(1,args)
+            with patch.object(assets,'run',side_effect=fail),self.assertRaises(subprocess.CalledProcessError):assets.publish('nulix/nulix-alpine')
+            self.assertEqual((assets.ROOT/assets.LOCK).read_text(),'previous pins')
+            self.assertEqual((assets.ROOT/assets.OVERLAY).read_text(),'previous overlay')
+        with patch.object(assets,'published_digest',return_value='sha256:'+'a'*64),self.assertRaises(ValueError):
+            assets.add_tag('immutable-tag','source@sha256:'+'b'*64,'sha256:'+'b'*64)
+
+
+    def test_versions_validate_the_machine_architecture_and_pinned_sources(self):
+        versions=self.versions()
+        plan={'rootfs-base':{'args':{'ALPINE_VERSION':'3.22.2'}},'linux-kernel':{'args':{'MACHINE_ARCH':'arm64','KERNEL_REV':'1'*40}},'u-boot':{'args':{'UBOOT_REV':'2'*40}},'firmware':{'args':{'MACHINE_NAME':assets.MACHINE,'FIRMWARE_REV':'3'*40}},'ostree-initramfs':{}}
+        with tempfile.TemporaryDirectory() as directory,patch.object(assets,'ROOT',Path(directory)),patch.object(assets,'run',return_value=json.dumps({'target':plan})):
+            folder=assets.ROOT/'machines';folder.mkdir();file=folder/(assets.MACHINE+'.components.json')
+            file.write_text(json.dumps({'schemaVersion':1,'machine':assets.MACHINE,'components':versions}))
+            self.assertEqual(assets.release_versions(),versions)
+            versions['linux-kernel']['sourceRevision']='9'*40;file.write_text(json.dumps({'schemaVersion':1,'machine':assets.MACHINE,'components':versions}))
+            with self.assertRaisesRegex(ValueError,'pinned source'):assets.release_versions()
+
+    def test_dirty_source_never_reaches_registry_publication(self):
+        with patch.object(assets,'run',side_effect=['b'*40,' M recipes/linux-kernel/Dockerfile\n']),patch.object(assets,'published_digest') as registry:
+            with self.assertRaisesRegex(ValueError,'Commit component source'):assets.publish('nulix/nulix-alpine')
+            registry.assert_not_called()
+
+    def test_promotion_from_dev_reuses_all_five_images_without_source_compilation(self):
+        with tempfile.TemporaryDirectory() as directory,patch.object(assets,'ROOT',Path(directory)),patch.object(assets,'release_versions',return_value=self.versions()),patch.object(assets,'fingerprint',return_value='a'*64),patch.object(assets,'check'):
+            registry,built,repacked,writes,lookup,command=self.fake_registry(missing=assets.COMPONENTS)
+            for name,info in self.versions().items():registry[assets.release_descriptor('nulix/nulix-alpine',name,info,'a'*64,'dev')['tag']]='sha256:'+'4'*64
+            with patch.object(assets,'published_digest',side_effect=lookup),patch.object(assets,'run',side_effect=command):assets.publish('nulix/nulix-alpine')
+            self.assertEqual(built,[]);self.assertEqual(set(repacked),set(assets.PUBLISHED_COMPONENTS))
+
+    def test_failed_final_verification_restores_previous_lock_files(self):
+        with tempfile.TemporaryDirectory() as directory,patch.object(assets,'ROOT',Path(directory)),patch.object(assets,'release_versions',return_value=self.versions()),patch.object(assets,'fingerprint',return_value='a'*64),patch.object(assets,'check',side_effect=ValueError('verification failed')):
+            registry,built,repacked,writes,lookup,command=self.fake_registry()
+            (assets.ROOT/assets.LOCK).write_text('{}');(assets.ROOT/assets.OVERLAY).write_text('previous overlay')
+            with patch.object(assets,'published_digest',side_effect=lookup),patch.object(assets,'run',side_effect=command),self.assertRaisesRegex(ValueError,'verification failed'):assets.publish('nulix/nulix-alpine')
+            self.assertEqual((assets.ROOT/assets.LOCK).read_text(),'{}');self.assertEqual((assets.ROOT/assets.OVERLAY).read_text(),'previous overlay')
 
 if __name__ == '__main__':
     unittest.main()

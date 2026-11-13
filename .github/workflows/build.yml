@@ -8,6 +8,8 @@ on:
       - recipes/**
       - machines/**
       - docker-bake.hcl
+      - machines/raspberry-pi-3.components.json
+      - scripts/machine-assets.py
       - hosted-machine-assets.hcl
       - scripts/resolve-machine-assets.py
       - .github/workflows/build.yml
@@ -17,6 +19,8 @@ on:
       - recipes/**
       - machines/**
       - docker-bake.hcl
+      - machines/raspberry-pi-3.components.json
+      - scripts/machine-assets.py
       - hosted-machine-assets.hcl
       - scripts/resolve-machine-assets.py
       - .github/workflows/build.yml

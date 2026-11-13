@@ -1,9 +1,19 @@
+variable "ALPINE_VERSION" {
+  default = "3.22.2"
+}
+
 variable "MACHINE_VIRT" {
   default = "docker"
 }
 
 group "default" {
   targets = ["nulix-builder", "firmware", "ostree-initramfs", "linux-kernel", "u-boot", "ostree-rootfs", "ostree-sd-image"]
+}
+
+target "rootfs-base" {
+  context = "./recipes/rootfs-base"
+  platforms = ["linux/arm64"]
+  args = { ALPINE_VERSION = "${ALPINE_VERSION}" }
 }
 
 target "nulix-builder" {
@@ -66,6 +76,7 @@ target "ostree-rootfs" {
   }
 
   contexts = {
+    rootfs-base = "target:rootfs-base"
     linux-kernel = "target:linux-kernel"
     ostree-initramfs = "target:ostree-initramfs"
     builder = "target:nulix-builder"

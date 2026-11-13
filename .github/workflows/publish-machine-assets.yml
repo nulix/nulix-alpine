@@ -1,11 +1,23 @@
-name: Publish foundation machine assets
+name: Publish versioned OS components
 
 on:
   workflow_dispatch:
+    inputs:
+      channel:
+        description: Component release channel
+        type: choice
+        options: [stable, dev]
+        default: stable
+      create_namespaces:
+        description: First publication to new GHCR package paths (only if GHCR returns 403 before creation)
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
       - builder/**
+      - recipes/rootfs-base/**
+      - machines/raspberry-pi-3.components.json
       - recipes/linux-kernel/**
       - recipes/u-boot/**
       - recipes/firmware/**
@@ -19,12 +31,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: foundation-machine-assets-${{ github.ref }}
+  group: versioned-os-components-${{ inputs.channel || 'stable' }}
   cancel-in-progress: false
 
 jobs:
   publish:
-    name: Publish Raspberry Pi 3 components to GHCR
+    name: Publish Rootfs Base and Raspberry Pi 3 components to GHCR
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 240
     permissions:
@@ -44,11 +56,16 @@ jobs:
           GH_ACTOR: ${{ github.actor }}
         run: printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GH_ACTOR" --password-stdin
       - name: Test asset locking
-        run: python3 -m unittest discover -s tests -p 'machine_assets_test.py'
+        run: python3 -m unittest discover -s tests -p '*test.py'
       - name: Reuse published components and build only missing inputs
         env:
           REPOSITORY: ${{ github.repository }}
-        run: python3 scripts/machine-assets.py publish --repository "$REPOSITORY"
+          CHANNEL: ${{ inputs.channel || 'stable' }}
+          CREATE_NAMESPACES: ${{ inputs.create_namespaces || 'false' }}
+        run: |
+          args=(publish --repository "$REPOSITORY" --channel "$CHANNEL")
+          if test "$CREATE_NAMESPACES" = true; then args+=(--create-namespaces); fi
+          python3 scripts/machine-assets.py "${args[@]}"
       - name: Save reviewed digest pins
         uses: actions/upload-artifact@v7
         with:
@@ -57,7 +74,8 @@ jobs:
             machine-assets.lock.json
             hosted-machine-assets.hcl
           retention-days: 30
-      - name: Open foundation asset update for review
+      - name: Open component digest update for review
+        if: inputs.channel != 'dev'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BASE_BRANCH: ${{ github.ref_name }}
@@ -75,7 +93,7 @@ jobs:
           git add machine-assets.lock.json hosted-machine-assets.hcl
           git commit -m 'build: pin prebuilt Raspberry Pi 3 foundation components'
           git push origin "$branch"
-          if ! gh pr create --base "$BASE_BRANCH" --head "$branch" --title 'Pin prebuilt Raspberry Pi 3 foundation components' --body 'Pins the published kernel, matching modules and DTBs, U-Boot, firmware and initramfs by GHCR digest. Merge after review, ensure the runner can pull these packages, and publish a foundation release. User OS builds will reuse these components and build only the rootfs and image.'; then
+          if ! gh pr create --base "$BASE_BRANCH" --head "$branch" --title 'Pin prebuilt Raspberry Pi 3 foundation components' --body 'Pins the published Rootfs Base, kernel with matching modules and DTBs, bootloader, firmware and initramfs by machine-scoped, versioned GHCR digest. Merge after review, ensure the runner can pull these packages, and publish a foundation release. User OS builds will reuse these components and build only the rootfs and image.'; then
             echo '::warning::Images and digest-pin branch were published. Automatic PR creation is unavailable; open the PR manually using the workflow summary.'
             compare_url="$SERVER_URL/$REPOSITORY/compare/$BASE_BRANCH...$branch?expand=1"
             printf '\n### Manual review needed\n\nImages are published. [Create the digest-pin pull request](%s), then review and merge it before releasing the foundation.\n' "$compare_url" >> "$GITHUB_STEP_SUMMARY"

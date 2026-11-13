@@ -1,7 +1,7 @@
 # ------------------------
 # Base builder
 # ------------------------
-FROM alpine:3.22.2 AS rootfs
+FROM rootfs-base AS rootfs
 
 ARG MACHINE_NAME
 ARG MACHINE_ARCH

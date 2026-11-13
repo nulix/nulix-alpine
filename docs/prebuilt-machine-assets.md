@@ -1,98 +1,119 @@
-# Prebuilt foundation machine assets
+# Versioned machine components in GHCR
 
-NULIX publishes four scratch OCI images under `ghcr.io/nulix/nulix-alpine/`:
+NULIX publishes a credential-free Rootfs Base and four hardware components. The
+canonical package layout is:
 
-- `raspberry-pi-3-linux-kernel`: kernel image, matching modules, DTBs and overlays.
-- `raspberry-pi-3-u-boot`: U-Boot binary and boot script.
-- `raspberry-pi-3-firmware`: Raspberry Pi boot firmware and configuration.
-- `raspberry-pi-3-ostree-initramfs`: the OSTree boot environment.
+```text
+ghcr.io/<owner>/<repository>/<machine>/<component>/<release-family>
+```
 
-These contain build inputs, not runnable application containers. No customer profile,
-SSH key, enrollment credential, agent customization or rootfs is published here.
-The agent remains part of the rootfs recipe. This does not introduce APK packages.
+For the current Raspberry Pi 3 profile:
 
-## First publication
+| Package under `ghcr.io/nulix/nulix-alpine/` | Full upstream/NULIX version |
+| --- | --- |
+| `raspberry-pi-3/rootfs-base/3.22` | Alpine 3.22.2 |
+| `raspberry-pi-3/linux-kernel/6.12` | Linux 6.12.62 + matching modules and DTBs |
+| `raspberry-pi-3/u-boot/2025.10` | U-Boot 2025.10 + boot script |
+| `raspberry-pi-3/firmware/2025.12` | 2025-12-17 firmware snapshot `f1ea7092589b` |
+| `raspberry-pi-3/ostree-initramfs/1.0` | NULIX OSTree initramfs 1.0.0 |
 
-1. Commit and push the publishing workflow, script and tests to the OS repository.
-   The `Publish foundation machine assets` workflow runs on relevant changes to main,
-   or can be started from Actions manually. It compiles on a GitHub-hosted ARM64 runner,
-   independently of the platform's single-slot Oracle builder.
-2. The workflow signs in using its `GITHUB_TOKEN` with `packages: write`, publishes all
-   four images, saves their immutable digests, and opens a PR containing
-   `machine-assets.lock.json` and `hosted-machine-assets.hcl`. It needs the repository
-   Actions setting **Allow GitHub Actions to create and approve pull requests** for
-   automatic PR creation. If the repository checkbox is disabled, an organization
-   owner can enable it under organization **Settings → Actions → General → Workflow
-   permissions** (subject to enterprise policy).
-   Publication does not require that setting: if automatic PR creation is blocked,
-   the job succeeds with a warning and a manual PR link in its workflow summary.
-   The digest-pin branch has already been pushed. Open that link, review and merge
-   the PR yourself; no recompilation is needed. Alternatively, download the
-   `raspberry-pi-3-machine-assets` workflow artifact and commit both files together.
-   Do not invent placeholder digests.
-   Committed pins are recommended for reviewed foundation releases. Updated builders
-   can also discover published components before the pin PR is merged, by matching
-   the exact recipe-input hash and resolving it to an immutable digest.
-3. GHCR packages initially have private visibility, even for public repositories.
-   Make these four foundation packages public in their package settings so local and
-   Oracle builders can pull anonymously. Alternatively, authenticate the OS user that
-   runs Buildx using a classic PAT with `read:packages`. The runner uses root; a login
-   as `ubuntu` alone does not configure root's Docker credentials. Credentials belong
-   on the build host, never in the repository, Bake file, rootfs or enrollment image.
-4. Review and merge the pins. Run `Build image` against the merged revision and test
-   the image on a Raspberry Pi 3 before publishing a GitHub foundation release.
-   New platform builds must select that new foundation revision; existing foundation
-   releases remain pinned to their original source and assets.
-5. Upgrade the platform CLI and hosted runner with the matching platform changes.
-   The runner verifies the component lock before applying user settings. There is no
-   database migration and no automatic device deployment.
+The `dev` publishing channel adds `-dev` to each family namespace, for example
+`raspberry-pi-3/linux-kernel/6.12-dev`. These are separate GHCR packages, not tags
+of the stable package. Each package has an `input-<publication-hash>` lookup tag
+and a full-version/build tag such as `6.12.62-<hash-prefix>`. Consumers always pin
+`@sha256:...`; neither tag is a substitute for a digest lock.
 
-Publication uses registry build caches to preserve intermediate compiler work across
-workflow runs. Do not delete image versions still referenced by foundation locks.
-Cache tags may move; the component references consumed by OS builds always use digests.
+## Rootfs Base and OS customization
 
-## Incremental publication
+`recipes/rootfs-base/Dockerfile` supplies the Alpine userspace image used by the
+rootfs recipe. `ALPINE_VERSION` is shared through Bake. The base does not contain
+a device certificate, enrollment token, user's SSH key, Compose stack or user
+profile. Rootfs/agent customization and the OSTree commit are assembled per OS
+build. This is not a preconfigured user OS and does not introduce APK artifacts.
+The other four packages are scratch build-input images, not application containers.
 
-The publishing workflow first checks GHCR for `input-<component-hash>` tags. It builds
-only components whose matching artifact is absent. A kernel recipe/config/source
-change leaves U-Boot, firmware and initramfs reusable. Shared builder changes affect
-the three components that use that builder; initramfs has its own Alpine toolchain.
-Rootfs, agent, documentation and pin-merge changes do not trigger component publication.
-Changes to shared Bake files may run the check, but unchanged component inputs do not
-build or republish images.
+## Release metadata
 
-Existing aggregate-hash publications are adopted by adding component lookup tags,
-without compiling or uploading the artifact layers again. Aggregate tags remain
-available for existing hosted runners and CLIs. When both tags are current, publication
-does not invoke Buildx builds or registry tag writes. The pin file preserves its
-original source revision when the inputs and digests have not changed, avoiding
-metadata-only pin update PRs after merges.
+`machines/raspberry-pi-3.components.json` records the full versions, release
+families and pinned upstream revisions. Publication validates it against effective
+Bake arguments: hardware source pins, board, architecture and Alpine version.
+When updating a source revision, update its full version/family metadata as well.
+For the NULIX-owned initramfs, bump its version when its boot behavior changes.
+Firmware uses a date/source snapshot because upstream has no semantic release
+number for this package. A build fingerprint distinguishes rebuilds of a source
+version with changed recipes or tooling.
 
-The workflow summary lists **Reused** and **Built** components. An authentication or
-registry error fails the publication check instead of starting an unnecessary compile.
-The image workflow also filters push/PR paths: unrelated documentation, manifest
-metadata and lock-metadata-only commits do not assemble another image. Changes to
-actual recipes, machine profiles or the digest overlay still build the image.
+Inspect the release plan without building or publishing:
 
-## Subsequent builds
+```sh
+python3 scripts/machine-assets.py versions
+```
 
-`nulix build --machine raspberry-pi-3 --version 1.2.8` automatically uses committed
-pins with the updated CLI. If no pins are committed, it looks up matching published
-components in GHCR. It reuses each available component and compiles only those that
-are missing or inaccessible. It never selects an unrelated `latest` image. Registry
-access failures are reported in the fallback summary.
+Publication requires committed source. Generated lock/overlay changes are allowed,
+but dirty recipes or release metadata are rejected before registry writes so image
+provenance points to the exact checked-out Git commit.
 
-The image workflow does the same automatically. For direct Bake without committed pins:
+## GitHub Actions publication
+
+Push these changes to `main`, or run **Publish versioned OS components** from
+Actions. The job uses a GitHub-hosted ARM64 runner and the repository's
+`GITHUB_TOKEN` with `packages: write`. It does not use the Oracle build slot.
+Relevant recipe, machine-version, Bake or publisher changes trigger the workflow;
+rootfs profile, agent-only and documentation changes do not republish components.
+
+The workflow checks input tags first. Existing hardware is migrated by reusing its
+exact old artifact layers and repackaging only OCI labels. This does not run a
+kernel, firmware or bootloader compiler. Only a missing source/input fingerprint
+causes compilation. The first migration builds the small Rootfs Base image and
+repackages the four already-published hardware images. Later unchanged runs do not
+build, repackage or retag anything. Promotion between stable/dev families also
+reuses exact matching source inputs; changing channels does not compile hardware.
+
+The summary lists reused, repackaged and built components plus exact published
+references. Authentication/network failures normally fail the check before an
+expensive compile. If GHCR returns 403 because a **new namespace has not been
+created**, rerun the workflow manually with `create_namespaces` enabled. This is
+an explicit first-publication bootstrap, not a fix for invalid credentials.
+Rootfs Base publishes first, so a write-permission failure occurs before any
+hardware compile. Use this bootstrap only for expected new packages.
+
+New GHCR packages may initially be private. Set each newly created package family
+public in GitHub package settings for anonymous discovery/pulls. Alternatively,
+configure read-only pull credentials separately on the platform and builder.
+Credentials belong on hosts, never in any component or device image.
+
+Stable runs save all five digest pins in `machine-assets.lock.json` (schema 2)
+and `hosted-machine-assets.hcl`, then open a review PR. If GitHub policy blocks
+Actions from opening PRs, the workflow keeps the pushed pin branch and supplies a
+manual compare link. Review/merge the pins, build and test the Pi image before
+releasing the reviewed OS recipe. A `dev` run uploads the pins as an Actions
+artifact but does not automatically propose them as the stable foundation pins.
+
+## Compatibility and migration
+
+A shared immutable 64-character tag identifies a reviewed hardware combination.
+Rootfs Base is versioned independently; updating Alpine or the agent does not
+force kernel/bootloader/firmware compilation. Existing source-input hashes are
+preserved, allowing reuse of already-published components. Legacy flat package
+paths and pins remain valid; additive aliases support older consumers without
+replacing an existing immutable legacy reference. Do not delete versions still
+referenced by a lock or OS version.
+
+The schema-2 consumption overlay pins Rootfs Base, kernel, bootloader, firmware and
+initramfs. The build graph consumes only rootfs/image targets and the necessary
+builder tooling, not component source targets. The resolver discovers canonical
+versioned packages even before a generated pin PR is merged. Older source revisions
+without version metadata continue using legacy discovery. An image that was
+explicitly selected/pinned cannot silently fall back to a different component.
+Missing unpinned components retain the existing source-build fallback behavior.
 
 ```sh
 python3 scripts/resolve-machine-assets.py
 docker buildx bake -f docker-bake.hcl -f machines/raspberry-pi-3.hcl \
-  -f .nulix/machine-assets.hcl
+  -f .nulix/machine-assets.hcl ostree-rootfs ostree-sd-image
 ```
 
-`.nulix/resolved-machine-assets.json` records the actual digests, reused components,
-and source fallbacks for that build. These generated files are ignored by Git.
-When using committed pins directly:
+Or, after merging the generated pins:
 
 ```sh
 python3 scripts/machine-assets.py check
@@ -100,33 +121,18 @@ docker buildx bake -f docker-bake.hcl -f machines/raspberry-pi-3.hcl \
   -f hosted-machine-assets.hcl
 ```
 
-The resolved graph contains only `nulix-builder`, `ostree-rootfs`, and
-`ostree-sd-image`. It pulls machine artifacts, installs rootfs packages and the agent,
-creates an OSTree commit, and assembles the flashable image. The builder tools image
-can still build if its local cache is cold; it does not compile a kernel or U-Boot.
-An unavailable GHCR image fails the build rather than silently compiling from source.
-
-The lock fingerprints effective component Bake arguments, the shared builder recipe,
-and component recipe files. A rootfs/agent-only change keeps the pins valid. Changing
-kernel sources/configuration, bootloader, firmware, initramfs or builder inputs requires
-rerunning publication and merging fresh pins. The publication workflow always uses the
-source targets and ignores the consumption overlay.
-
-To publish manually on a sufficiently provisioned ARM64 Docker host, first authenticate
-to GHCR with `write:packages`, then run:
+Manual publication on an authenticated ARM64 Docker host:
 
 ```sh
 python3 scripts/machine-assets.py publish --repository nulix/nulix-alpine
+# Development family namespaces:
+python3 scripts/machine-assets.py publish --repository nulix/nulix-alpine --channel dev
 ```
 
-Commit the resulting two pin files only after all four images publish successfully.
-The fingerprint identifies recipe inputs; it does not make mutable upstream apt/apk
-repositories reproducible. Published digests preserve the actual built artifact.
+## Device update boundary
 
-## Bootloader update boundary
-
-New flashable images include the selected bootloader and firmware. Existing devices
-receiving an OSTree update do not automatically replace their boot partition's U-Boot
-or firmware. Keep foundation delivery marked `reflash` until that separate update path
-is implemented and tested. Kernel modules and the kernel image are always consumed
-together from one artifact digest.
+The flashable image includes bootloader and boot firmware. OSTree deployment does
+not automatically replace U-Boot or all boot-partition firmware. Bootloader changes
+remain disabled for subsequent user OS versions, and firmware changes still require
+a supported boot-file delivery path or a newly flashed image. Keep the recipe's
+`delivery: reflash` policy until that separate OTA path is implemented and tested.
