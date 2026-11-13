@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 2,
+  "machine": "raspberry-pi-3",
+  "sourceCommit": "d79f012ebfbda0f15d9b32742feb6150af16d4f5",
+  "inputsSha256": "4790bb67cfdd015b5414713e1fa0403fef2ec56d262476de736de6ee0761dd52",
+  "componentInputs": {
+    "rootfs-base": "319a94f57312f38e770d0d46e4b2528d39178308e0357b1f18f9932ba843855e",
+    "linux-kernel": "c7e0273fca240393246744830d0d6d6a1ac575c609808c20b1cf6f47e3c06b0f",
+    "u-boot": "9d773920dc287b9d1e4a4230adc353d0855ce25b7c9e63d76a8e4351f924a4ab",
+    "firmware": "c86348ea04e8a30fd38bc5472846f2a3dfa6400ebb7c53a1ba5c6a70472dabb4",
+    "ostree-initramfs": "60967c01ce850a98a663bd7e0d42526a321d28b778de730f1f5fb71d89a16a8d"
+  },
+  "componentVersions": {
+    "rootfs-base": {
+      "version": "3.22.2",
+      "line": "3.22"
+    },
+    "linux-kernel": {
+      "version": "6.12.62",
+      "line": "6.12",
+      "sourceRevision": "a1073743767f9e7fdc7017ababd2a07ea0c97c1c"
+    },
+    "u-boot": {
+      "version": "2025.10",
+      "line": "2025.10",
+      "sourceRevision": "e50b1e8715011def8aff1588081a2649a2c6cd47"
+    },
+    "firmware": {
+      "version": "2025.12.17-f1ea7092589b",
+      "line": "2025.12",
+      "sourceRevision": "f1ea7092589bc9627c23916132baa7841932b707"
+    },
+    "ostree-initramfs": {
+      "version": "1.0.0",
+      "line": "1.0"
+    }
+  },
+  "components": {
+    "rootfs-base": "ghcr.io/nulix/nulix-alpine/raspberry-pi-3/rootfs-base/3.22@sha256:d8023ab0d942b4c1a5775ee43c5e1179e9844da60762682c2c0e8ecbcfe74fcf",
+    "linux-kernel": "ghcr.io/nulix/nulix-alpine/raspberry-pi-3/linux-kernel/6.12@sha256:da5262028e559d50e61b199cc209b843fcfc5c67cd40feff35d4c3c5a90bf96c",
+    "u-boot": "ghcr.io/nulix/nulix-alpine/raspberry-pi-3/u-boot/2025.10@sha256:65408841e728fa98de164b3cf71d3db2ee43099fd6e556b5ee77bb935ef3fab9",
+    "firmware": "ghcr.io/nulix/nulix-alpine/raspberry-pi-3/firmware/2025.12@sha256:3d32e1f930d04f2ead599d7113d70137941db7665fd8fc5322f3f6adc0f6ad1b",
+    "ostree-initramfs": "ghcr.io/nulix/nulix-alpine/raspberry-pi-3/ostree-initramfs/1.0@sha256:0e1a290f7bc107a749d65d4795e852529d2c523c2c34b13971a14f07920fa7e6"
+  }
+}
