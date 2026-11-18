@@ -25,13 +25,14 @@ on:
       - machines/raspberry-pi-3.hcl
       - docker-bake.hcl
       - scripts/machine-assets.py
+      - scripts/builder-image.py
       - .github/workflows/publish-machine-assets.yml
 
 permissions:
   contents: read
 
 concurrency:
-  group: versioned-os-components-${{ inputs.channel || 'stable' }}
+  group: versioned-os-components-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
@@ -57,6 +58,10 @@ jobs:
         run: printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GH_ACTOR" --password-stdin
       - name: Test asset locking
         run: python3 -m unittest discover -s tests -p '*test.py'
+      - name: Publish build tooling only when its inputs change
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: python3 scripts/builder-image.py publish --repository "$REPOSITORY"
       - name: Reuse published components and build only missing inputs
         env:
           REPOSITORY: ${{ github.repository }}
@@ -73,6 +78,7 @@ jobs:
           path: |
             machine-assets.lock.json
             hosted-machine-assets.hcl
+            builder-image.lock.json
           retention-days: 30
       - name: Open component digest update for review
         if: inputs.channel != 'dev'
@@ -82,7 +88,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           SERVER_URL: ${{ github.server_url }}
         run: |
-          if git diff --quiet -- machine-assets.lock.json hosted-machine-assets.hcl && test -z "$(git ls-files --others --exclude-standard -- machine-assets.lock.json hosted-machine-assets.hcl)"; then
+          if git diff --quiet -- machine-assets.lock.json hosted-machine-assets.hcl builder-image.lock.json && test -z "$(git ls-files --others --exclude-standard -- machine-assets.lock.json hosted-machine-assets.hcl builder-image.lock.json)"; then
             echo 'Component pins are already current.'
             exit 0
           fi
@@ -90,7 +96,7 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           branch="foundation-assets/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           git checkout -b "$branch"
-          git add machine-assets.lock.json hosted-machine-assets.hcl
+          git add machine-assets.lock.json hosted-machine-assets.hcl builder-image.lock.json
           git commit -m 'build: pin prebuilt Raspberry Pi 3 foundation components'
           git push origin "$branch"
           if ! gh pr create --base "$BASE_BRANCH" --head "$branch" --title 'Pin prebuilt Raspberry Pi 3 foundation components' --body 'Pins the published Rootfs Base, kernel with matching modules and DTBs, bootloader, firmware and initramfs by machine-scoped, versioned GHCR digest. Merge after review, ensure the runner can pull these packages, and publish a foundation release. User OS builds will reuse these components and build only the rootfs and image.'; then

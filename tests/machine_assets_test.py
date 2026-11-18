@@ -90,7 +90,10 @@ class VersionedPublicationTests(unittest.TestCase):
         registry={f'ghcr.io/nulix/nulix-alpine/raspberry-pi-3-{c}:input-'+('a'*64):'sha256:'+str(i+1)*64
                   for i,c in enumerate(assets.COMPONENTS) if c not in missing}
         builds=[];repackages=[];writes=[]
-        def lookup(image, **options): return registry.get(image)
+        def lookup(image, **options):
+            if '/raspberry-pi-3-' in image:
+                self.assertTrue(options.get('allow_missing_namespace'), 'Retired legacy packages are optional migration inputs')
+            return registry.get(image)
         def command(args,capture=False):
             if args[0]=='git': return '' if args[1]=='status' else 'b'*40
             if 'imagetools' in args:
@@ -125,6 +128,8 @@ class VersionedPublicationTests(unittest.TestCase):
             self.assertIn('/raspberry-pi-3/rootfs-base/3.22@',lock['components']['rootfs-base'])
             self.assertEqual(assets.overlay(lock).count('docker-image://'),6)
             self.assertTrue(all('/raspberry-pi-3/' in ref for ref in lock['components'].values()))
+            self.assertTrue(writes)
+            self.assertTrue(all('/raspberry-pi-3/' in tag for tag in writes), 'Publication must not recreate legacy namespaces')
 
     def test_unchanged_publications_do_not_rebuild_repackage_retag_or_change_source_pin(self):
         with tempfile.TemporaryDirectory() as directory,patch.object(assets,'ROOT',Path(directory)),patch.object(assets,'release_versions',return_value=self.versions()),patch.object(assets,'fingerprint',return_value='a'*64),patch.object(assets,'check'):

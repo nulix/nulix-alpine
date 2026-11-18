@@ -25,7 +25,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 UUID = re.compile(r"^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$")
 SHA = re.compile(r"^[a-f0-9]{64}$")
 STOP = False
@@ -55,9 +55,9 @@ def write_private(file, content):
     finally:
         temporary.unlink(missing_ok=True)
 
-def read_json(file):
+def read_json(file, max_bytes=32768):
     file = Path(file)
-    if file.stat().st_size > 32768:
+    if file.stat().st_size > max_bytes:
         raise AgentError("Configuration is too large")
     return json.loads(file.read_text())
 
@@ -226,7 +226,7 @@ def telemetry():
             docker.update(status="available", truncated=len(lines) > 12)
         except (OSError, ValueError, KeyError, AgentError, subprocess.TimeoutExpired):
             docker["containers"] = []
-    return {"addresses": addresses[:16], "docker": docker, "agentCapabilities": {"deploy": bool(shutil.which("ostree")) and Path("/sysroot/ostree/repo").is_dir(), "applications": compose_available(), "inspection": True}}
+    return {"addresses": addresses[:16], "docker": docker, "agentCapabilities": {"deploy": bool(shutil.which("ostree")) and Path("/sysroot/ostree/repo").is_dir(), "applications": compose_available(), "inspection": True, "continuousLogs": True}}
 
 def update_state(state, deployment, status, error=None):
     value = {"id": deployment["id"], "commit": deployment["commit"], "status": status, "error": error}
@@ -710,6 +710,9 @@ def read_log_batch(state, instruction, cache):
         hashes = [hashlib.sha256(line.encode()).hexdigest() for line in lines]
         seen = set(cache.get('seen', [])); lines = [line for line, digest in zip(lines, hashes) if digest not in seen]
         cache.update(seen=hashes, since=since)
+    return normalize_log_lines(lines, cache), truncated
+
+def normalize_log_lines(lines, cache):
     result = []
     for line in lines:
         if '-----BEGIN ' in line and 'PRIVATE KEY' in line: cache['privateKey'] = True
@@ -720,7 +723,7 @@ def read_log_batch(state, instruction, cache):
         if not message: continue
         level = 'error' if re.search(r'\b(error|failed|fatal|panic)\b', message, re.I) else 'warning' if re.search(r'\b(warn(?:ing)?|timeout)\b', message, re.I) else 'info'
         result.append({'time': datetime.now(timezone.utc).isoformat(), 'level': level, 'message': message})
-    return result, truncated
+    return result
 
 def send_inspection(state, data, directory, instruction):
     report = {'deviceId': data['deviceId']}
@@ -753,6 +756,97 @@ def send_inspection(state, data, directory, instruction):
     if len(report) > 1:
         post(data, '/inspect', report, directory)
 
+def continuous_file_logs(source, cache):
+    path = Path('/var/log/messages' if source == 'system' else '/var/log/nulix-agent.log')
+    with path.open('rb') as stream:
+        info = os.fstat(stream.fileno())
+        is_same_file = cache.get('inode') == info.st_ino
+        start = cache.get('position', 0) if is_same_file else max(0, info.st_size - 12000)
+        truncated = not is_same_file and start > 0
+        if not is_same_file or start > info.st_size:
+            cache.pop('skipLine', None)
+            cache.pop('privateKey', None)
+        if start > info.st_size:
+            start = 0
+        stream.seek(start)
+        if truncated:
+            stream.readline(12000)
+        lines = []
+        for _ in range(20):
+            offset = stream.tell()
+            raw = stream.readline(12000)
+            if not raw:
+                break
+            if not raw.endswith(b'\n'):
+                if len(raw) < 12000:
+                    stream.seek(offset)
+                    break
+                # Discard oversized records, including their continuation.
+                truncated = True
+                cache['skipLine'] = True
+                continue
+            if cache.pop('skipLine', False):
+                continue
+            lines.append(raw.decode('utf-8', errors='replace').rstrip('\r\n'))
+        cache.update(inode=info.st_ino, position=stream.tell())
+    return normalize_log_lines(lines, cache), truncated
+
+def send_continuous_logs(state, data, identity, applications, boot_id):
+    file = state / 'continuous-log-cursor.json'
+    try:
+        cache = read_json(file, 131072) if file.exists() else {}
+    except (OSError, ValueError, AgentError):
+        cache = {}
+    if cache.get('deviceId') != data['deviceId']:
+        cache = {'deviceId': data['deviceId']}
+
+    # Write the cursor and pending payload together before uploading so a lost
+    # response replays the same UUIDs without losing the corresponding records.
+    pending = cache.get('pending')
+    if not pending:
+        now = time.time()
+        if 0 <= now - cache.get('sampledAt', 0) < 60:
+            return
+        streams = cache.setdefault('streams', {})
+        app_ids = [app['id'] for app in applications if UUID.fullmatch(app.get('id', ''))]
+        for key in set(streams) - {'system', 'kernel', 'agent', *app_ids}:
+            del streams[key]
+        tasks = [{'source': source} for source in ('system', 'kernel', 'agent')]
+        if app_ids:
+            index = cache.get('applicationIndex', 0) % len(app_ids)
+            tasks.append({'source': 'applications', 'applicationId': app_ids[index]})
+            cache['applicationIndex'] = (index + 1) % len(app_ids)
+        pending = []
+        for task in tasks:
+            source = task['source']
+            stream = streams.setdefault(task.get('applicationId', source), {})
+            if source == 'kernel' and stream.get('bootId') != boot_id:
+                stream.clear()
+                stream['bootId'] = boot_id
+            try:
+                if source in ('system', 'agent'):
+                    lines, truncated = continuous_file_logs(source, stream)
+                else:
+                    lines, truncated = read_log_batch(state, task, stream)
+            except (OSError, ValueError, AgentError, subprocess.TimeoutExpired):
+                continue
+            if lines:
+                batch = {**task, 'id': str(uuid.uuid4()), 'lines': lines, 'truncated': truncated}
+                while len(json.dumps(batch, ensure_ascii=False).encode()) > 6000:
+                    lines.pop(0)
+                    batch['truncated'] = True
+                if lines:
+                    pending.append(batch)
+        cache.update(pending=pending, sampledAt=now)
+        write_private(file, json.dumps(cache, ensure_ascii=False))
+
+    if pending:
+        response = post(data, '/inspect', {'deviceId': data['deviceId'], 'logBatches': pending}, identity)
+        if response.get('accepted') is not True:
+            raise AgentError('Log upload was not accepted')
+        cache.pop('pending', None)
+        write_private(file, json.dumps(cache, ensure_ascii=False))
+
 def checkin(state):
     identity = active(state)
     if not identity:
@@ -771,7 +865,12 @@ def checkin(state):
             send_inspection(state, data, directory, response["inspection"])
         except (OSError, ValueError, KeyError, TypeError, AgentError, subprocess.TimeoutExpired):
             print("Inspection report deferred; device check-ins continue.", flush=True)
-    print("Authenticated device check-in accepted.", flush=True)
+    if response.get("continuousLogs") is True:
+        try:
+            send_continuous_logs(state, data, directory, report["applications"], report["bootId"])
+        except (OSError, ValueError, KeyError, TypeError, AgentError, subprocess.TimeoutExpired):
+            # Retain the pending batch. A logging outage must not interrupt check-ins.
+            pass
     return response
 
 def main(argv=None):

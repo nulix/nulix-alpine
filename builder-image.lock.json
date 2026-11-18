@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "inputsSha256": "69e8dd5458cebcca416ede8eb1d7ff5013e698624ffc3202a09c31bf87ad891c",
+  "ref": "ghcr.io/nulix/nulix-alpine/build-tools/arm64@sha256:a0b28dbbf0abd7671abb78aaae4d58646b8d8d33fa6aef6f37d8dd3e344ace1a"
+}

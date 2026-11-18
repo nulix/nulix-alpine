@@ -148,7 +148,7 @@ def publish(repository, channel='stable', create_namespaces=False):
     repository = repository.lower()
     revision = run(['git', 'rev-parse', 'HEAD'], capture=True).strip()
     dirty=run(['git','status','--porcelain','--untracked-files=normal'],capture=True)
-    if any(line[3:] not in (LOCK,OVERLAY) for line in dirty.splitlines() if line.strip()):
+    if any(line[3:] not in (LOCK,OVERLAY,'builder-image.lock.json') for line in dirty.splitlines() if line.strip()):
         raise ValueError('Commit component source and release metadata before publishing so OCI provenance identifies the exact source revision')
     versions = release_versions()
     inputs = fingerprint()
@@ -166,9 +166,9 @@ def publish(repository, channel='stable', create_namespaces=False):
         legacy_image = f'ghcr.io/{repository}/{MACHINE}-{component}'
         legacy_digest = None
         if digest is None and component in COMPONENTS:
-            legacy_digest = published_digest(legacy_image + ':input-' + source_inputs[component])
+            legacy_digest = published_digest(legacy_image + ':input-' + source_inputs[component], allow_missing_namespace=True)
             if legacy_digest is None:
-                legacy_digest = published_digest(legacy_image + ':' + inputs)
+                legacy_digest = published_digest(legacy_image + ':' + inputs, allow_missing_namespace=True)
         if digest is None and legacy_digest is None:
             # Promote exact inputs between stable/dev families without compiling.
             # An absent optional peer namespace is not an error for the target.
@@ -215,13 +215,6 @@ def publish(repository, channel='stable', create_namespaces=False):
         add_tag(descriptor['versionTag'], components[component], digest)
         if component in COMPONENTS:
             add_tag(image + ':' + cohort, components[component], digest)
-            # Compatibility aliases are additive. Never replace existing legacy pins.
-            if channel == 'stable':
-                old_source = f'ghcr.io/{repository}/{MACHINE}-{component}'
-                old_digest = published_digest(old_source + ':input-' + source_inputs[component])
-                old_ref = old_source + '@' + old_digest if old_digest else components[component]
-                add_tag(old_source + ':input-' + source_inputs[component], old_ref, old_digest or digest, strict=False)
-                add_tag(old_source + ':' + inputs, old_ref, old_digest or digest, strict=False)
     previous = json.loads((ROOT / LOCK).read_text()) if (ROOT / LOCK).is_file() else {}
     if previous.get('inputsSha256') == inputs and previous.get('components') == components:
         revision = previous.get('sourceCommit', revision)

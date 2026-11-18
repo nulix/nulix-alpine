@@ -12,6 +12,8 @@ on:
       - scripts/machine-assets.py
       - hosted-machine-assets.hcl
       - scripts/resolve-machine-assets.py
+      - scripts/builder-image.py
+      - builder-image.lock.json
       - .github/workflows/build.yml
   pull_request:
     paths:
@@ -23,6 +25,8 @@ on:
       - scripts/machine-assets.py
       - hosted-machine-assets.hcl
       - scripts/resolve-machine-assets.py
+      - scripts/builder-image.py
+      - builder-image.lock.json
       - .github/workflows/build.yml
   workflow_dispatch:
 
@@ -55,11 +59,17 @@ jobs:
           cat /tmp/nulix-machine-assets.json
           overlay=$(python3 -c 'import json; print(json.load(open("/tmp/nulix-machine-assets.json"))["overlay"] or "")')
           if test -n "$overlay"; then args+=(-f "$overlay"); fi
+          tools=(resolve --require)
+          if test -n "$overlay"; then tools+=(--bake-file "$overlay"); fi
+          python3 scripts/builder-image.py "${tools[@]}" > /tmp/nulix-builder-image.json
+          cat /tmp/nulix-builder-image.json
+          tooling=$(python3 -c 'import json; print(json.load(open("/tmp/nulix-builder-image.json"))["overlay"])')
+          args+=(-f "$tooling")
           docker buildx bake "${args[@]}" ostree-rootfs ostree-sd-image --provenance=false
 
       - name: Upload OS image
         uses: actions/upload-artifact@v7
         with:
-          name: nulix-os.img.bz2
-          path: out/raspberry-pi-3/ostree-sd-image/nulix-os.img.bz2
+          name: nulix-os.img.xz
+          path: out/raspberry-pi-3/ostree-sd-image/nulix-os.img.xz
           retention-days: 7 # Keep the artifact for 7 days

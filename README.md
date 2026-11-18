@@ -45,7 +45,7 @@ docker bake -f docker-bake.hcl -f machines/raspberry-pi-3.hcl
 ## 🤖 Flash the image
 
 ```bash
-bzcat out/ostree-sd-image/nulix-os.img.bz2 | sudo dd of=/dev/rdisk<N> bs=4M iflag=fullblock oflag=direct status=progress
+xzcat out/raspberry-pi-3/ostree-sd-image/nulix-os.img.xz | sudo dd of=/dev/rdisk<N> bs=4M iflag=fullblock oflag=direct status=progress
 ```
 
 > [!NOTE]

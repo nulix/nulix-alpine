@@ -94,10 +94,10 @@ artifact but does not automatically propose them as the stable foundation pins.
 A shared immutable 64-character tag identifies a reviewed hardware combination.
 Rootfs Base is versioned independently; updating Alpine or the agent does not
 force kernel/bootloader/firmware compilation. Existing source-input hashes are
-preserved, allowing reuse of already-published components. Legacy flat package
-paths and pins remain valid; additive aliases support older consumers without
-replacing an existing immutable legacy reference. Do not delete versions still
-referenced by a lock or OS version.
+preserved, allowing reuse of already-published components. Legacy flat package paths remain readable during migration, but the publisher
+only writes machine-scoped, versioned paths; it never recreates retired flat
+namespaces. Before deleting legacy packages, migrate any locks or saved OS
+compositions that still reference them.
 
 The schema-2 consumption overlay pins Rootfs Base, kernel, bootloader, firmware and
 initramfs. The build graph consumes only rootfs/image targets and the necessary
@@ -136,3 +136,38 @@ not automatically replace U-Boot or all boot-partition firmware. Bootloader chan
 remain disabled for subsequent user OS versions, and firmware changes still require
 a supported boot-file delivery path or a newly flashed image. Keep the recipe's
 `delivery: reflash` policy until that separate OTA path is implemented and tested.
+
+## Prebuilt builder tooling
+
+`ghcr.io/nulix/nulix-alpine/build-tools/arm64` contains the trusted Ubuntu tooling
+used for OSTree and image assembly. It contains no customer profile or enrollment
+credentials. The publisher hashes the builder context and effective Bake arguments,
+reuses an existing `input-<hash>` publication, and writes an immutable digest to
+`builder-image.lock.json`. Rootfs, agent and application changes do not alter this
+hash. Publish with:
+
+```sh
+python3 scripts/builder-image.py publish --repository nulix/nulix-alpine
+```
+
+The component-publication workflow also publishes this tooling and includes its
+lock in the reviewed pin PR. Set the new GHCR package public once so anonymous
+hosted/local pulls work. The image-build workflow resolves the tooling after its
+component overlay and fails if no matching tooling publication is available;
+rerun it after publishing a new builder revision. The CLI prefers matching published
+tooling; hosted component builds require it. Existing committed locks must match
+the actual tooling recipe, and network/authentication failures do not authorize
+substituting an unrelated image.
+
+The generated `.nulix/builder-image.hcl` replaces the `builder` contexts with that
+digest and removes the standalone source builder from the effective default group.
+With a selected component composition, only `ostree-rootfs` and `ostree-sd-image`
+remain in the build graph.
+
+## Single-pass image compression
+
+The SD-image recipe exports `nulix-os.img.xz` directly using fast XZ compression.
+There is no intermediate Bzip2 artifact. Hosted builds validate the XZ stream and
+its expanded-size limit, then upload those exact bytes without another raw image
+copy or recompression. The runner adapts older reviewed Bzip2 recipes to this same
+XZ export; older external compressed outputs remain readable for compatibility.

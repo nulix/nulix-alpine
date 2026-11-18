@@ -147,12 +147,12 @@ RUN if [ -n "${UBOOT_IMAGES}" ]; then \
     fi
 
 # ------------------------
-# Compress
+# Compress directly to the final XZ artifact, once.
 # ------------------------
-RUN bzip2 ${IMAGE_FILE}
+RUN xz -T1 -1 --check=crc32 ${IMAGE_FILE}
 
 # ------------------------
 # Export
 # ------------------------
 FROM scratch AS export
-COPY --from=build /work/*.bz2 /
+COPY --from=build /work/*.img.xz /
